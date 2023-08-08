@@ -31,6 +31,10 @@ if(MLIR_LINK_MLIR_DYLIB)
 endif()
 
 if(LLVM_BUILD_LLVM_DYLIB)
+  if(MLIR_ENABLE_CUDA_RUNNER)
+    find_library(CUDA_DRIVER_LIBRARY cuda REQUIRED)
+    list(APPEND _DEPS ${CUDA_DRIVER_LIBRARY})    
+  endif()
   add_mlir_library(
     MLIR
     SHARED
