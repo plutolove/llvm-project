@@ -55,7 +55,7 @@ GDBRemoteCommunicationServer::GetPacketAndSendResponse(
       break;
 
     case StringExtractorGDBRemote::eServerPacketType_invalid:
-      error = Status::FromErrorString("invalid packet");
+      error.SetErrorString("invalid packet");
       quit = true;
       break;
 
@@ -73,10 +73,10 @@ GDBRemoteCommunicationServer::GetPacketAndSendResponse(
     }
   } else {
     if (!IsConnected()) {
-      error = Status::FromErrorString("lost connection");
+      error.SetErrorString("lost connection");
       quit = true;
     } else {
-      error = Status::FromErrorString("timeout");
+      error.SetErrorString("timeout");
     }
   }
 

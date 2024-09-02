@@ -32,8 +32,9 @@ public:
                       ArrayRef<std::string> DSYMSearchPaths,
                       StringRef PathPrefix = "", StringRef VariantSuffix = "",
                       bool Verbose = false)
-      : BinaryPath(std::string(BinaryPath)), Archs(Archs),
-        DSYMSearchPaths(DSYMSearchPaths), PathPrefix(std::string(PathPrefix)),
+      : BinaryPath(std::string(BinaryPath)), Archs(Archs.begin(), Archs.end()),
+        DSYMSearchPaths(DSYMSearchPaths.begin(), DSYMSearchPaths.end()),
+        PathPrefix(std::string(PathPrefix)),
         VariantSuffix(std::string(VariantSuffix)), BinHolder(VFS, Verbose),
         CurrentDebugMapObject(nullptr), SkipDebugMapObject(false) {}
 
@@ -300,7 +301,7 @@ void MachODebugMapParser::switchToNewLibDebugMapObject(
 
     if (CurrentDebugMapObject &&
         CurrentDebugMapObject->getType() == MachO::N_LIB &&
-        CurrentDebugMapObject->getObjectFilename() == Path) {
+        CurrentDebugMapObject->getObjectFilename().compare(Path.str()) == 0) {
       return;
     }
 

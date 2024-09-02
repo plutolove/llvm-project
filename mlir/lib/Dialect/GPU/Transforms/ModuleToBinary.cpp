@@ -38,9 +38,24 @@ class GpuModuleToBinaryPass
     : public impl::GpuModuleToBinaryPassBase<GpuModuleToBinaryPass> {
 public:
   using Base::Base;
+  void getDependentDialects(DialectRegistry &registry) const override;
   void runOnOperation() final;
 };
 } // namespace
+
+void GpuModuleToBinaryPass::getDependentDialects(
+    DialectRegistry &registry) const {
+  // Register all GPU related translations.
+  registry.insert<gpu::GPUDialect>();
+  registry.insert<LLVM::LLVMDialect>();
+#if MLIR_CUDA_CONVERSIONS_ENABLED == 1
+  registry.insert<NVVM::NVVMDialect>();
+#endif
+#if MLIR_ROCM_CONVERSIONS_ENABLED == 1
+  registry.insert<ROCDL::ROCDLDialect>();
+#endif
+  registry.insert<spirv::SPIRVDialect>();
+}
 
 void GpuModuleToBinaryPass::runOnOperation() {
   RewritePatternSet patterns(&getContext());
@@ -72,7 +87,10 @@ void GpuModuleToBinaryPass::runOnOperation() {
   TargetOptions targetOptions(toolkitPath, linkFiles, cmdOptions, *targetFormat,
                               lazyTableBuilder);
   if (failed(transformGpuModulesToBinaries(
-          getOperation(), OffloadingLLVMTranslationAttrInterface(nullptr),
+          getOperation(),
+          offloadingHandler ? dyn_cast<OffloadingLLVMTranslationAttrInterface>(
+                                  offloadingHandler.getValue())
+                            : OffloadingLLVMTranslationAttrInterface(nullptr),
           targetOptions)))
     return signalPassFailure();
 }
@@ -99,8 +117,7 @@ LogicalResult moduleSerializer(GPUModuleOp op,
       return failure();
     }
 
-    Attribute object =
-        target.createObject(op, *serializedModule, targetOptions);
+    Attribute object = target.createObject(*serializedModule, targetOptions);
     if (!object) {
       op.emitError("An error happened while creating the object.");
       return failure();

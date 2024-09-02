@@ -41,8 +41,7 @@ static const SanitizerMask NotAllowedWithExecuteOnly =
     SanitizerKind::Function | SanitizerKind::KCFI;
 static const SanitizerMask NeedsUnwindTables =
     SanitizerKind::Address | SanitizerKind::HWAddress | SanitizerKind::Thread |
-    SanitizerKind::Memory | SanitizerKind::DataFlow |
-    SanitizerKind::NumericalStability;
+    SanitizerKind::Memory | SanitizerKind::DataFlow;
 static const SanitizerMask SupportsCoverage =
     SanitizerKind::Address | SanitizerKind::HWAddress |
     SanitizerKind::KernelAddress | SanitizerKind::KernelHWAddress |
@@ -54,8 +53,7 @@ static const SanitizerMask SupportsCoverage =
     SanitizerKind::DataFlow | SanitizerKind::Fuzzer |
     SanitizerKind::FuzzerNoLink | SanitizerKind::FloatDivideByZero |
     SanitizerKind::SafeStack | SanitizerKind::ShadowCallStack |
-    SanitizerKind::Thread | SanitizerKind::ObjCCast | SanitizerKind::KCFI |
-    SanitizerKind::NumericalStability;
+    SanitizerKind::Thread | SanitizerKind::ObjCCast | SanitizerKind::KCFI;
 static const SanitizerMask RecoverableByDefault =
     SanitizerKind::Undefined | SanitizerKind::Integer |
     SanitizerKind::ImplicitConversion | SanitizerKind::Nullability |
@@ -119,12 +117,6 @@ static SanitizerMask parseArgValues(const Driver &D, const llvm::opt::Arg *A,
 static int parseCoverageFeatures(const Driver &D, const llvm::opt::Arg *A,
                                  bool DiagnoseErrors);
 
-/// Parse -fsanitize-undefined-ignore-overflow-pattern= flag values, diagnosing
-/// any invalid values. Returns a mask of excluded overflow patterns.
-static int parseOverflowPatternExclusionValues(const Driver &D,
-                                               const llvm::opt::Arg *A,
-                                               bool DiagnoseErrors);
-
 /// Parse -f(no-)?sanitize-metadata= flag values, diagnosing any invalid
 /// components. Returns OR of members of \c BinaryMetadataFeature enumeration.
 static int parseBinaryMetadataFeatures(const Driver &D, const llvm::opt::Arg *A,
@@ -183,7 +175,6 @@ static void addDefaultIgnorelists(const Driver &D, SanitizerMask Kinds,
                      {"hwasan_ignorelist.txt", SanitizerKind::HWAddress},
                      {"memtag_ignorelist.txt", SanitizerKind::MemTag},
                      {"msan_ignorelist.txt", SanitizerKind::Memory},
-                     {"nsan_ignorelist.txt", SanitizerKind::NumericalStability},
                      {"tsan_ignorelist.txt", SanitizerKind::Thread},
                      {"dfsan_abilist.txt", SanitizerKind::DataFlow},
                      {"cfi_ignorelist.txt", SanitizerKind::CFI},
@@ -291,8 +282,8 @@ bool SanitizerArgs::needsFuzzerInterceptors() const {
 
 bool SanitizerArgs::needsUbsanRt() const {
   // All of these include ubsan.
-  if (needsAsanRt() || needsMsanRt() || needsNsanRt() || needsHwasanRt() ||
-      needsTsanRt() || needsDfsanRt() || needsLsanRt() || needsCfiDiagRt() ||
+  if (needsAsanRt() || needsMsanRt() || needsHwasanRt() || needsTsanRt() ||
+      needsDfsanRt() || needsLsanRt() || needsCfiDiagRt() ||
       (needsScudoRt() && !requiresMinimalRuntime()))
     return false;
 
@@ -496,14 +487,6 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
         Add &= ~NotAllowedWithExecuteOnly;
       if (CfiCrossDso)
         Add &= ~SanitizerKind::CFIMFCall;
-      // -fsanitize=undefined does not expand to signed-integer-overflow in
-      // -fwrapv (implied by -fno-strict-overflow) mode.
-      if (Add & SanitizerKind::UndefinedGroup) {
-        bool S = Args.hasFlagNoClaim(options::OPT_fno_strict_overflow,
-                                     options::OPT_fstrict_overflow, false);
-        if (Args.hasFlagNoClaim(options::OPT_fwrapv, options::OPT_fno_wrapv, S))
-          Add &= ~SanitizerKind::SignedIntegerOverflow;
-      }
       Add &= Supported;
 
       if (Add & SanitizerKind::Fuzzer)
@@ -558,15 +541,11 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
                          SanitizerKind::Leak | SanitizerKind::Thread |
                          SanitizerKind::Memory | SanitizerKind::KernelAddress |
                          SanitizerKind::Scudo | SanitizerKind::SafeStack),
-      std::make_pair(SanitizerKind::MemTag, SanitizerKind::Address |
-                                                SanitizerKind::KernelAddress |
-                                                SanitizerKind::HWAddress |
-                                                SanitizerKind::KernelHWAddress),
-      std::make_pair(SanitizerKind::KCFI, SanitizerKind::Function),
-      std::make_pair(SanitizerKind::Realtime,
-                     SanitizerKind::Address | SanitizerKind::Thread |
-                         SanitizerKind::Undefined | SanitizerKind::Memory)};
-
+      std::make_pair(SanitizerKind::MemTag,
+                     SanitizerKind::Address | SanitizerKind::KernelAddress |
+                         SanitizerKind::HWAddress |
+                         SanitizerKind::KernelHWAddress),
+      std::make_pair(SanitizerKind::KCFI, SanitizerKind::Function)};
   // Enable toolchain specific default sanitizers if not explicitly disabled.
   SanitizerMask Default = TC.getDefaultSanitizers() & ~AllRemove;
 
@@ -798,13 +777,6 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
           << "fsanitize-trap=cfi";
   }
 
-  for (const auto *Arg : Args.filtered(
-           options::OPT_fsanitize_undefined_ignore_overflow_pattern_EQ)) {
-    Arg->claim();
-    OverflowPatternExclusions |=
-        parseOverflowPatternExclusionValues(D, Arg, DiagnoseErrors);
-  }
-
   // Parse -f(no-)?sanitize-coverage flags if coverage is supported by the
   // enabled sanitizers.
   for (const auto *Arg : Args) {
@@ -817,8 +789,7 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
         Arg->claim();
         if (LegacySanitizeCoverage != 0 && DiagnoseErrors) {
           D.Diag(diag::warn_drv_deprecated_arg)
-              << Arg->getAsString(Args) << /*hasReplacement=*/true
-              << "-fsanitize-coverage=trace-pc-guard";
+              << Arg->getAsString(Args) << "-fsanitize-coverage=trace-pc-guard";
         }
         continue;
       }
@@ -854,11 +825,11 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
     // enabled.
     if (CoverageFeatures & CoverageTraceBB)
       D.Diag(clang::diag::warn_drv_deprecated_arg)
-          << "-fsanitize-coverage=trace-bb" << /*hasReplacement=*/true
+          << "-fsanitize-coverage=trace-bb"
           << "-fsanitize-coverage=trace-pc-guard";
     if (CoverageFeatures & Coverage8bitCounters)
       D.Diag(clang::diag::warn_drv_deprecated_arg)
-          << "-fsanitize-coverage=8bit-counters" << /*hasReplacement=*/true
+          << "-fsanitize-coverage=8bit-counters"
           << "-fsanitize-coverage=trace-pc-guard";
   }
 
@@ -870,7 +841,7 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
   if ((CoverageFeatures & InsertionPointTypes) &&
       !(CoverageFeatures & InstrumentationTypes) && DiagnoseErrors) {
     D.Diag(clang::diag::warn_drv_deprecated_arg)
-        << "-fsanitize-coverage=[func|bb|edge]" << /*hasReplacement=*/true
+        << "-fsanitize-coverage=[func|bb|edge]"
         << "-fsanitize-coverage=[func|bb|edge],[trace-pc-guard|trace-pc],["
            "control-flow]";
   }
@@ -1213,9 +1184,7 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
                           BinaryMetadataIgnorelistFiles);
   }
 
-  if (TC.getTriple().isOSWindows() && needsUbsanRt() &&
-      Args.hasFlag(options::OPT_frtlib_defaultlib,
-                   options::OPT_fno_rtlib_defaultlib, true)) {
+  if (TC.getTriple().isOSWindows() && needsUbsanRt()) {
     // Instruct the code generator to embed linker directives in the object file
     // that cause the required runtime libraries to be linked.
     CmdArgs.push_back(
@@ -1226,9 +1195,7 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
           "--dependent-lib=" +
           TC.getCompilerRTBasename(Args, "ubsan_standalone_cxx")));
   }
-  if (TC.getTriple().isOSWindows() && needsStatsRt() &&
-      Args.hasFlag(options::OPT_frtlib_defaultlib,
-                   options::OPT_fno_rtlib_defaultlib, true)) {
+  if (TC.getTriple().isOSWindows() && needsStatsRt()) {
     CmdArgs.push_back(Args.MakeArgString(
         "--dependent-lib=" + TC.getCompilerRTBasename(Args, "stats_client")));
 
@@ -1257,10 +1224,6 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
                         "-fsanitize-ignorelist=", UserIgnorelistFiles);
   addSpecialCaseListOpt(Args, CmdArgs,
                         "-fsanitize-system-ignorelist=", SystemIgnorelistFiles);
-
-  if (OverflowPatternExclusions)
-    Args.AddAllArgs(
-        CmdArgs, options::OPT_fsanitize_undefined_ignore_overflow_pattern_EQ);
 
   if (MsanTrackOrigins)
     CmdArgs.push_back(Args.MakeArgString("-fsanitize-memory-track-origins=" +
@@ -1445,31 +1408,6 @@ SanitizerMask parseArgValues(const Driver &D, const llvm::opt::Arg *A,
           << A->getSpelling() << Value;
   }
   return Kinds;
-}
-
-static int parseOverflowPatternExclusionValues(const Driver &D,
-                                               const llvm::opt::Arg *A,
-                                               bool DiagnoseErrors) {
-  int Exclusions = 0;
-  for (int i = 0, n = A->getNumValues(); i != n; ++i) {
-    const char *Value = A->getValue(i);
-    int E =
-        llvm::StringSwitch<int>(Value)
-            .Case("none", LangOptionsBase::None)
-            .Case("all", LangOptionsBase::All)
-            .Case("add-unsigned-overflow-test",
-                  LangOptionsBase::AddUnsignedOverflowTest)
-            .Case("add-signed-overflow-test",
-                  LangOptionsBase::AddSignedOverflowTest)
-            .Case("negated-unsigned-const", LangOptionsBase::NegUnsignedConst)
-            .Case("unsigned-post-decr-while", LangOptionsBase::PostDecrInWhile)
-            .Default(0);
-    if (E == 0)
-      D.Diag(clang::diag::err_drv_unsupported_option_argument)
-          << A->getSpelling() << Value;
-    Exclusions |= E;
-  }
-  return Exclusions;
 }
 
 int parseCoverageFeatures(const Driver &D, const llvm::opt::Arg *A,

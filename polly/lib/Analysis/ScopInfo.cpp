@@ -73,7 +73,6 @@
 using namespace llvm;
 using namespace polly;
 
-#include "polly/Support/PollyDebug.h"
 #define DEBUG_TYPE "polly-scops"
 
 STATISTIC(AssumptionsAliasing, "Number of aliasing assumptions taken.");
@@ -533,9 +532,6 @@ MemoryAccess::getReductionOperatorStr(MemoryAccess::ReductionType RT) {
   case MemoryAccess::RT_NONE:
     llvm_unreachable("Requested a reduction operator string for a memory "
                      "access which isn't a reduction");
-  case MemoryAccess::RT_BOTTOM:
-    llvm_unreachable("Requested a reduction operator string for a internal "
-                     "reduction type!");
   case MemoryAccess::RT_ADD:
     return "+";
   case MemoryAccess::RT_MUL:
@@ -918,15 +914,10 @@ isl::id MemoryAccess::getId() const { return Id; }
 
 raw_ostream &polly::operator<<(raw_ostream &OS,
                                MemoryAccess::ReductionType RT) {
-  switch (RT) {
-  case MemoryAccess::RT_NONE:
-  case MemoryAccess::RT_BOTTOM:
+  if (RT == MemoryAccess::RT_NONE)
     OS << "NONE";
-    break;
-  default:
+  else
     OS << MemoryAccess::getReductionOperatorStr(RT);
-    break;
-  }
   return OS;
 }
 
@@ -2051,7 +2042,7 @@ void Scop::intersectDefinedBehavior(isl::set Set, AssumptionSign Sign) {
 }
 
 void Scop::invalidate(AssumptionKind Kind, DebugLoc Loc, BasicBlock *BB) {
-  POLLY_DEBUG(dbgs() << "Invalidate SCoP because of reason " << Kind << "\n");
+  LLVM_DEBUG(dbgs() << "Invalidate SCoP because of reason " << Kind << "\n");
   addAssumption(Kind, isl::set::empty(getParamSpace()), Loc, AS_ASSUMPTION, BB);
 }
 

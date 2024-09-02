@@ -6,8 +6,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <memory>
-
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/Object/COFF.h"
 
@@ -18,9 +16,7 @@ using namespace llvm::orc;
 
 class JITDylibSearchOrderResolver : public JITSymbolResolver {
 public:
-  JITDylibSearchOrderResolver(MaterializationResponsibility &MR,
-                              SymbolDependenceMap &Deps)
-      : MR(MR), Deps(Deps) {}
+  JITDylibSearchOrderResolver(MaterializationResponsibility &MR) : MR(MR) {}
 
   void lookup(const LookupSet &Symbols, OnResolvedFunction OnResolved) override {
     auto &ES = MR.getTargetJITDylib().getExecutionSession();
@@ -47,13 +43,17 @@ public:
           OnResolved(Result);
         };
 
+    // Register dependencies for all symbols contained in this set.
+    auto RegisterDependencies = [&](const SymbolDependenceMap &Deps) {
+      MR.addDependenciesForAll(Deps);
+    };
+
     JITDylibSearchOrder LinkOrder;
     MR.getTargetJITDylib().withLinkOrderDo(
         [&](const JITDylibSearchOrder &LO) { LinkOrder = LO; });
-    ES.lookup(
-        LookupKind::Static, LinkOrder, InternedSymbols, SymbolState::Resolved,
-        std::move(OnResolvedWithUnwrap),
-        [this](const SymbolDependenceMap &LookupDeps) { Deps = LookupDeps; });
+    ES.lookup(LookupKind::Static, LinkOrder, InternedSymbols,
+              SymbolState::Resolved, std::move(OnResolvedWithUnwrap),
+              RegisterDependencies);
   }
 
   Expected<LookupSet> getResponsibilitySet(const LookupSet &Symbols) override {
@@ -69,7 +69,6 @@ public:
 
 private:
   MaterializationResponsibility &MR;
-  SymbolDependenceMap &Deps;
 };
 
 } // end anonymous namespace
@@ -184,15 +183,12 @@ void RTDyldObjectLinkingLayer::emit(
   // Switch to shared ownership of MR so that it can be captured by both
   // lambdas below.
   std::shared_ptr<MaterializationResponsibility> SharedR(std::move(R));
-  auto Deps = std::make_unique<SymbolDependenceMap>();
 
-  auto Resolver =
-      std::make_unique<JITDylibSearchOrderResolver>(*SharedR, *Deps);
-  auto *ResolverPtr = Resolver.get();
+  JITDylibSearchOrderResolver Resolver(*SharedR);
 
   jitLinkForORC(
       object::OwningBinary<object::ObjectFile>(std::move(*Obj), std::move(O)),
-      MemMgrRef, *ResolverPtr, ProcessAllSections,
+      MemMgrRef, Resolver, ProcessAllSections,
       [this, SharedR, &MemMgrRef, InternalSymbols](
           const object::ObjectFile &Obj,
           RuntimeDyld::LoadedObjectInfo &LoadedObjInfo,
@@ -200,13 +196,12 @@ void RTDyldObjectLinkingLayer::emit(
         return onObjLoad(*SharedR, Obj, MemMgrRef, LoadedObjInfo,
                          ResolvedSymbols, *InternalSymbols);
       },
-      [this, SharedR, MemMgr = std::move(MemMgr), Deps = std::move(Deps),
-       Resolver = std::move(Resolver)](
+      [this, SharedR, MemMgr = std::move(MemMgr)](
           object::OwningBinary<object::ObjectFile> Obj,
           std::unique_ptr<RuntimeDyld::LoadedObjectInfo> LoadedObjInfo,
           Error Err) mutable {
         onObjEmit(*SharedR, std::move(Obj), std::move(MemMgr),
-                  std::move(LoadedObjInfo), std::move(Deps), std::move(Err));
+                  std::move(LoadedObjInfo), std::move(Err));
       });
 }
 
@@ -361,20 +356,14 @@ void RTDyldObjectLinkingLayer::onObjEmit(
     MaterializationResponsibility &R,
     object::OwningBinary<object::ObjectFile> O,
     std::unique_ptr<RuntimeDyld::MemoryManager> MemMgr,
-    std::unique_ptr<RuntimeDyld::LoadedObjectInfo> LoadedObjInfo,
-    std::unique_ptr<SymbolDependenceMap> Deps, Error Err) {
+    std::unique_ptr<RuntimeDyld::LoadedObjectInfo> LoadedObjInfo, Error Err) {
   if (Err) {
     getExecutionSession().reportError(std::move(Err));
     R.failMaterialization();
     return;
   }
 
-  SymbolDependenceGroup SDG;
-  for (auto &[Sym, Flags] : R.getSymbols())
-    SDG.Symbols.insert(Sym);
-  SDG.Dependencies = std::move(*Deps);
-
-  if (auto Err = R.notifyEmitted(SDG)) {
+  if (auto Err = R.notifyEmitted()) {
     getExecutionSession().reportError(std::move(Err));
     R.failMaterialization();
     return;

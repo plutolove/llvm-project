@@ -379,13 +379,13 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
                                            lldb::ValueObjectSP &new_value_sp) {
   Status error;
   if (!new_value_sp) {
-    error = Status::FromErrorString("Empty value object for return value.");
+    error.SetErrorString("Empty value object for return value.");
     return error;
   }
 
   CompilerType compiler_type = new_value_sp->GetCompilerType();
   if (!compiler_type) {
-    error = Status::FromErrorString("Null clang type for return value.");
+    error.SetErrorString("Null clang type for return value.");
     return error;
   }
 
@@ -406,7 +406,7 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
     Status data_error;
     size_t num_bytes = new_value_sp->GetData(data, data_error);
     if (data_error.Fail()) {
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "Couldn't convert return value to raw data: %s",
           data_error.AsCString());
       return error;
@@ -418,19 +418,18 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
       if (reg_ctx->WriteRegisterFromUnsigned(reg_info, raw_value))
         set_it_simple = true;
     } else {
-      error = Status::FromErrorString(
-          "We don't support returning longer than 64 bit "
-          "integer values at present.");
+      error.SetErrorString("We don't support returning longer than 64 bit "
+                           "integer values at present.");
     }
   } else if (compiler_type.IsFloatingPointType(count, is_complex)) {
     if (is_complex)
-      error = Status::FromErrorString(
+      error.SetErrorString(
           "We don't support returning complex values at present");
     else {
       std::optional<uint64_t> bit_width =
           compiler_type.GetBitSize(frame_sp.get());
       if (!bit_width) {
-        error = Status::FromErrorString("can't get type size");
+        error.SetErrorString("can't get type size");
         return error;
       }
       if (*bit_width <= 64) {
@@ -440,7 +439,7 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
         Status data_error;
         size_t num_bytes = new_value_sp->GetData(data, data_error);
         if (data_error.Fail()) {
-          error = Status::FromErrorStringWithFormat(
+          error.SetErrorStringWithFormat(
               "Couldn't convert return value to raw data: %s",
               data_error.AsCString());
           return error;
@@ -455,7 +454,7 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
         set_it_simple = true;
       } else {
         // FIXME - don't know how to do long doubles yet.
-        error = Status::FromErrorString(
+        error.SetErrorString(
             "We don't support returning float values > 64 bits at present");
       }
     }
@@ -465,9 +464,8 @@ Status ABISysV_s390x::SetReturnValueObject(lldb::StackFrameSP &frame_sp,
     // Okay we've got a structure or something that doesn't fit in a simple
     // register. We should figure out where it really goes, but we don't
     // support this yet.
-    error = Status::FromErrorString(
-        "We only support setting simple integer and float "
-        "return types at present.");
+    error.SetErrorString("We only support setting simple integer and float "
+                         "return types at present.");
   }
 
   return error;

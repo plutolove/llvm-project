@@ -169,14 +169,14 @@ def AnyAttr : Attr<CPred<"true">, "any attribute"> {
 
 // Any attribute from the given list
 class AnyAttrOf<list<Attr> allowedAttrs, string summary = "",
-                string cppType = "::mlir::Attribute",
+                string cppClassName = "::mlir::Attribute",
                 string fromStorage = "$_self"> : Attr<
     // Satisfy any of the allowed attribute's condition
     Or<!foreach(allowedattr, allowedAttrs, allowedattr.predicate)>,
     !if(!eq(summary, ""),
         !interleave(!foreach(t, allowedAttrs, t.summary), " or "),
         summary)> {
-    let returnType = cppType;
+    let returnType = cppClassName;
     let convertFromStorage = fromStorage;
 }
 
@@ -369,7 +369,7 @@ def TypeAttr : TypeAttrBase<"::mlir::Type", "any type attribute"> {
 }
 
 class TypeAttrOf<Type ty>
-   : TypeAttrBase<ty.cppType, "type attribute of " # ty.summary,
+   : TypeAttrBase<ty.cppClassName, "type attribute of " # ty.summary,
                     ty.predicate> {
   let constBuilderCall = "::mlir::TypeAttr::get($0)";
 }
@@ -755,7 +755,7 @@ class AllAttrOf<list<AttrConstraint> constraints> : AttrConstraint<
 
 class IntNEQValue<int n> : AttrConstraint<
     CPred<"::llvm::cast<::mlir::IntegerAttr>($_self).getInt() != " # n>,
-    "whose value is not " # n>;
+    "whose minimum value is " # n>;
 
 class IntMinValue<int n> : AttrConstraint<
     CPred<"::llvm::cast<::mlir::IntegerAttr>($_self).getInt() >= " # n>,
@@ -772,10 +772,6 @@ def IntNonNegative : AttrConstraint<
 def IntPositive : AttrConstraint<
     CPred<"::llvm::cast<::mlir::IntegerAttr>($_self).getValue().isStrictlyPositive()">,
     "whose value is positive">;
-
-class ArrayMaxCount<int n> : AttrConstraint<
-    CPred<"::llvm::cast<::mlir::ArrayAttr>($_self).size() <= " # n>,
-    "with at most " # n # " elements">;
 
 class ArrayMinCount<int n> : AttrConstraint<
     CPred<"::llvm::cast<::mlir::ArrayAttr>($_self).size() >= " # n>,

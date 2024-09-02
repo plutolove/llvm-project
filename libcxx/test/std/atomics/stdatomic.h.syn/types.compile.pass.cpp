@@ -101,8 +101,6 @@
 // using std::atomic_fetch_sub_explicit                   // see below
 // using std::atomic_fetch_or                             // see below
 // using std::atomic_fetch_or_explicit                    // see below
-// using std::atomic_fetch_xor                            // see below
-// using std::atomic_fetch_xor_explicit                   // see below
 // using std::atomic_fetch_and                            // see below
 // using std::atomic_fetch_and_explicit                   // see below
 // using std::atomic_flag_test_and_set                    // see below
@@ -224,8 +222,6 @@ void f() {
   using ::atomic_fetch_or_explicit;
   using ::atomic_fetch_sub;
   using ::atomic_fetch_sub_explicit;
-  using ::atomic_fetch_xor;
-  using ::atomic_fetch_xor_explicit;
   using ::atomic_flag_clear;
   using ::atomic_flag_clear_explicit;
   using ::atomic_flag_test_and_set;

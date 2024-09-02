@@ -617,9 +617,9 @@ void llvm_gcov_init(fn_ptr wfn, fn_ptr rfn) {
     atexit_ran = 1;
 
     /* Make sure we write out the data and delete the data structures. */
-    lprofAtExit(llvm_delete_reset_function_list);
+    atexit(llvm_delete_reset_function_list);
 #ifdef _WIN32
-    lprofAtExit(llvm_writeout_and_clear);
+    atexit(llvm_writeout_and_clear);
 #endif
   }
 }

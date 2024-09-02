@@ -25,7 +25,8 @@ _LIBCPP_PUSH_MACROS
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace ranges {
-struct __fill_n {
+namespace __fill_n {
+struct __fn {
   template <class _Type, output_iterator<const _Type&> _Iter>
   _LIBCPP_HIDE_FROM_ABI constexpr _Iter
   operator()(_Iter __first, iter_difference_t<_Iter> __n, const _Type& __value) const {
@@ -36,9 +37,10 @@ struct __fill_n {
     return __first;
   }
 };
+} // namespace __fill_n
 
 inline namespace __cpo {
-inline constexpr auto fill_n = __fill_n{};
+inline constexpr auto fill_n = __fill_n::__fn{};
 } // namespace __cpo
 } // namespace ranges
 

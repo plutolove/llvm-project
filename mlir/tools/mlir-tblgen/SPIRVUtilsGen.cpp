@@ -780,7 +780,8 @@ static void emitSerializationFunction(const Record *attrClass,
     os << formatv("  (void)emitDebugLine(functionBody, {0}.getLoc());\n",
                   opVar);
     os << formatv("  (void)encodeInstructionInto("
-                  "functionBody, spirv::Opcode::{0}, {1});\n",
+                  "functionBody, spirv::Opcode::{1}, {2});\n",
+                  op.getQualCppClassName(),
                   record->getValueAsString("spirvOpName"), operands);
   }
 

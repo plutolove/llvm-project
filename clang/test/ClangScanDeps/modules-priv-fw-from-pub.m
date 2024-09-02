@@ -45,7 +45,6 @@ module Dependency { header "dependency.h" }
 // CHECK-NEXT:         "[[PREFIX]]/modules/dependency.h",
 // CHECK-NEXT:         "[[PREFIX]]/modules/module.modulemap"
 // CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [],
 // CHECK-NEXT:       "name": "Dependency"
 // CHECK-NEXT:     },
 // CHECK-NEXT:     {
@@ -64,12 +63,6 @@ module Dependency { header "dependency.h" }
 // CHECK-NEXT:         "[[PREFIX]]/frameworks/FW.framework/Modules/module.modulemap",
 // CHECK-NEXT:         "[[PREFIX]]/frameworks/FW.framework/Modules/module.private.modulemap"
 // CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [
-// CHECK-NEXT:         {
-// CHECK-NEXT:           "isFramework": true,
-// CHECK-NEXT:           "link-name": "FW"
-// CHECK-NEXT:         }
-// CHECK-NEXT:       ],
 // CHECK-NEXT:       "name": "FW"
 // CHECK-NEXT:     },
 // CHECK-NEXT:     {
@@ -87,12 +80,6 @@ module Dependency { header "dependency.h" }
 // CHECK-NEXT:         "[[PREFIX]]/frameworks/FW.framework/Modules/module.private.modulemap",
 // CHECK-NEXT:         "[[PREFIX]]/frameworks/FW.framework/PrivateHeaders/FW_Private.h",
 // CHECK-NEXT:         "[[PREFIX]]/modules/module.modulemap"
-// CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [
-// CHECK-NEXT:         {
-// CHECK-NEXT:           "isFramework": true,
-// CHECK-NEXT:           "link-name": "FW"
-// CHECK-NEXT:         }
 // CHECK-NEXT:       ],
 // CHECK-NEXT:       "name": "FW_Private"
 // CHECK-NEXT:     }

@@ -143,7 +143,7 @@ namespace __sanitizer {
 typedef unsigned long long uptr;
 typedef signed long long sptr;
 #else
-#  if (SANITIZER_WORDSIZE == 64) || SANITIZER_APPLE
+#  if (SANITIZER_WORDSIZE == 64) || SANITIZER_APPLE || SANITIZER_WINDOWS
 typedef unsigned long uptr;
 typedef signed long sptr;
 #  else
@@ -191,10 +191,15 @@ typedef uptr OFF_T;
 #endif
 typedef u64  OFF64_T;
 
-#ifdef __SIZE_TYPE__
-typedef __SIZE_TYPE__ usize;
+#if (SANITIZER_WORDSIZE == 64) || SANITIZER_APPLE
+typedef uptr operator_new_size_type;
 #else
-typedef uptr usize;
+# if defined(__s390__) && !defined(__s390x__)
+// Special case: 31-bit s390 has unsigned long as size_t.
+typedef unsigned long operator_new_size_type;
+# else
+typedef u32 operator_new_size_type;
+# endif
 #endif
 
 typedef u64 tid_t;
@@ -455,9 +460,6 @@ namespace __lsan {
 using namespace __sanitizer;
 }
 namespace __msan {
-using namespace __sanitizer;
-}
-namespace __nsan {
 using namespace __sanitizer;
 }
 namespace __hwasan {

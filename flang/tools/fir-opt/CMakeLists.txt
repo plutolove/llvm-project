@@ -11,15 +11,12 @@ if(FLANG_INCLUDE_TESTS)
 endif()
 
 target_link_libraries(fir-opt PRIVATE
-  CUFAttrs
-  CUFDialect
   FIRDialect
   FIRSupport
   FIRTransforms
   FIRCodeGen
   HLFIRDialect
   HLFIRTransforms
-  FlangOpenMPTransforms
   FIRAnalysis
   ${test_libs}
   ${dialect_libs}

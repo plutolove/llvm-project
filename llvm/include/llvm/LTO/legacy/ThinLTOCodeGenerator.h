@@ -271,13 +271,12 @@ public:
                          const lto::InputFile &File);
 
   /**
-   * Compute the list of summaries and the subset of declaration summaries
-   * needed for importing into module.
+   * Compute the list of summaries needed for importing into module.
    */
   void gatherImportedSummariesForModule(
       Module &Module, ModuleSummaryIndex &Index,
-      ModuleToSummariesForIndexTy &ModuleToSummariesForIndex,
-      GVSummaryPtrSet &DecSummaries, const lto::InputFile &File);
+      std::map<std::string, GVSummaryMapTy> &ModuleToSummariesForIndex,
+      const lto::InputFile &File);
 
   /**
    * Perform internalization. Index is updated to reflect linkage changes.

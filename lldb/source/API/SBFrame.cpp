@@ -1024,15 +1024,15 @@ SBValue SBFrame::EvaluateExpression(const char *expr) {
     options.SetFetchDynamicValue(fetch_dynamic_value);
     options.SetUnwindOnError(true);
     options.SetIgnoreBreakpoints(true);
-    SourceLanguage language = target->GetLanguage();
-    if (!language)
-      language = frame->GetLanguage();
-    options.SetLanguage((SBSourceLanguageName)language.name, language.version);
+    if (target->GetLanguage() != eLanguageTypeUnknown)
+      options.SetLanguage(target->GetLanguage());
+    else
+      options.SetLanguage(frame->GetLanguage());
     return EvaluateExpression(expr, options);
   } else {
     Status error;
-    error = Status::FromErrorString("can't evaluate expressions when the "
-                                    "process is running.");
+    error.SetErrorString("can't evaluate expressions when the "
+                           "process is running.");
     ValueObjectSP error_val_sp = ValueObjectConstResult::Create(nullptr, error);
     result.SetSP(error_val_sp, false);
   }
@@ -1053,12 +1053,10 @@ SBFrame::EvaluateExpression(const char *expr,
 
   StackFrame *frame = exe_ctx.GetFramePtr();
   Target *target = exe_ctx.GetTargetPtr();
-  SourceLanguage language;
-  if (target)
-    language = target->GetLanguage();
-  if (!language && frame)
-    language = frame->GetLanguage();
-  options.SetLanguage((SBSourceLanguageName)language.name, language.version);
+  if (target && target->GetLanguage() != eLanguageTypeUnknown)
+    options.SetLanguage(target->GetLanguage());
+  else if (frame)
+    options.SetLanguage(frame->GetLanguage());
   return EvaluateExpression(expr, options);
 }
 
@@ -1076,12 +1074,10 @@ SBValue SBFrame::EvaluateExpression(const char *expr,
   options.SetIgnoreBreakpoints(true);
   StackFrame *frame = exe_ctx.GetFramePtr();
   Target *target = exe_ctx.GetTargetPtr();
-  SourceLanguage language;
-  if (target)
-    language = target->GetLanguage();
-  if (!language && frame)
-    language = frame->GetLanguage();
-  options.SetLanguage((SBSourceLanguageName)language.name, language.version);
+  if (target && target->GetLanguage() != eLanguageTypeUnknown)
+    options.SetLanguage(target->GetLanguage());
+  else if (frame)
+    options.SetLanguage(frame->GetLanguage());
   return EvaluateExpression(expr, options);
 }
 
@@ -1127,14 +1123,14 @@ lldb::SBValue SBFrame::EvaluateExpression(const char *expr,
       }
     } else {
       Status error;
-      error = Status::FromErrorString("can't evaluate expressions when the "
-                                      "process is running.");
+      error.SetErrorString("can't evaluate expressions when the "
+                           "process is running.");
       expr_value_sp = ValueObjectConstResult::Create(nullptr, error);
       expr_result.SetSP(expr_value_sp, false);
     }
   } else {
       Status error;
-      error = Status::FromErrorString("sbframe object is not valid.");
+      error.SetErrorString("sbframe object is not valid.");
       expr_value_sp = ValueObjectConstResult::Create(nullptr, error);
       expr_result.SetSP(expr_value_sp, false);
   }
@@ -1195,20 +1191,9 @@ bool SBFrame::IsArtificial() const {
   std::unique_lock<std::recursive_mutex> lock;
   ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
 
-  if (StackFrame *frame = exe_ctx.GetFramePtr())
+  StackFrame *frame = exe_ctx.GetFramePtr();
+  if (frame)
     return frame->IsArtificial();
-
-  return false;
-}
-
-bool SBFrame::IsHidden() const {
-  LLDB_INSTRUMENT_VA(this);
-
-  std::unique_lock<std::recursive_mutex> lock;
-  ExecutionContext exe_ctx(m_opaque_sp.get(), lock);
-
-  if (StackFrame *frame = exe_ctx.GetFramePtr())
-    return frame->IsHidden();
 
   return false;
 }
@@ -1233,7 +1218,7 @@ lldb::LanguageType SBFrame::GuessLanguage() const {
     if (stop_locker.TryLock(&process->GetRunLock())) {
       frame = exe_ctx.GetFramePtr();
       if (frame) {
-        return frame->GuessLanguage().AsLanguageType();
+        return frame->GuessLanguage();
       }
     }
   }

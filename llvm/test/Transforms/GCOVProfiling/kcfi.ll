@@ -24,10 +24,8 @@ entry:
 !9 = !{i32 4, !"kcfi", i32 1}
 
 ; CHECK: define internal void @__llvm_gcov_writeout()
-; CHECK-SAME: !kcfi_type ![[#TYPE:]]
+; CHECK-SAME: !kcfi_type
 ; CHECK: define internal void @__llvm_gcov_reset()
-; CHECK-SAME: !kcfi_type ![[#TYPE]]
+; CHECK-SAME: !kcfi_type
 ; CHECK: define internal void @__llvm_gcov_init()
-; CHECK-SAME: !kcfi_type ![[#TYPE]]
-
-; CHECK: ![[#TYPE]] = !{i32 -1522505972}
+; CHECK-SAME: !kcfi_type

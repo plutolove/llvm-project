@@ -61,13 +61,6 @@ std::string wasm::Linker::getLinkerPath(const ArgList &Args) const {
   return ToolChain.GetProgramPath(ToolChain.getDefaultLinker());
 }
 
-static bool TargetBuildsComponents(const llvm::Triple &TargetTriple) {
-  // WASIp2 and above are all based on components, so test for WASI but exclude
-  // the original `wasi` target in addition to the `wasip1` name.
-  return TargetTriple.isOSWASI() && TargetTriple.getOSName() != "wasip1" &&
-         TargetTriple.getOSName() != "wasi";
-}
-
 void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                 const InputInfo &Output,
                                 const InputInfoList &Inputs,
@@ -165,17 +158,9 @@ void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-o");
   CmdArgs.push_back(Output.getFilename());
 
-  // Don't use wasm-opt by default on `wasip2` as it doesn't have support for
-  // components at this time. Retain the historical default otherwise, though,
-  // of running `wasm-opt` by default.
-  bool WasmOptDefault = !TargetBuildsComponents(ToolChain.getTriple());
-  bool RunWasmOpt = Args.hasFlag(options::OPT_wasm_opt,
-                                 options::OPT_no_wasm_opt, WasmOptDefault);
-
-  // If wasm-opt is enabled and optimizations are happening look for the
-  // `wasm-opt` program. If it's not found auto-disable it.
+  // When optimizing, if wasm-opt is available, run it.
   std::string WasmOptPath;
-  if (RunWasmOpt && Args.getLastArg(options::OPT_O_Group)) {
+  if (Args.getLastArg(options::OPT_O_Group)) {
     WasmOptPath = ToolChain.GetProgramPath("wasm-opt");
     if (WasmOptPath == "wasm-opt") {
       WasmOptPath = {};
@@ -230,7 +215,7 @@ WebAssembly::WebAssembly(const Driver &D, const llvm::Triple &Triple,
 
   assert(Triple.isArch32Bit() != Triple.isArch64Bit());
 
-  getProgramPaths().push_back(getDriver().Dir);
+  getProgramPaths().push_back(getDriver().getInstalledDir());
 
   auto SysRoot = getDriver().SysRoot;
   if (getTriple().getOS() == llvm::Triple::UnknownOS) {
@@ -254,7 +239,7 @@ WebAssembly::WebAssembly(const Driver &D, const llvm::Triple &Triple,
 }
 
 const char *WebAssembly::getDefaultLinker() const {
-  if (TargetBuildsComponents(getTriple()))
+  if (getOS() == "wasip2")
     return "wasm-component-ld";
   return "wasm-ld";
 }
@@ -362,23 +347,6 @@ void WebAssembly::addClangTargetOptions(const ArgList &DriverArgs,
     // Backend needs -wasm-enable-eh to enable Wasm EH
     CC1Args.push_back("-mllvm");
     CC1Args.push_back("-wasm-enable-eh");
-
-    // New Wasm EH spec (adopted in Oct 2023) requires multivalue and
-    // reference-types.
-    if (DriverArgs.hasFlag(options::OPT_mno_multivalue,
-                           options::OPT_mmultivalue, false)) {
-      getDriver().Diag(diag::err_drv_argument_not_allowed_with)
-          << "-fwasm-exceptions" << "-mno-multivalue";
-    }
-    if (DriverArgs.hasFlag(options::OPT_mno_reference_types,
-                           options::OPT_mreference_types, false)) {
-      getDriver().Diag(diag::err_drv_argument_not_allowed_with)
-          << "-fwasm-exceptions" << "-mno-reference-types";
-    }
-    CC1Args.push_back("-target-feature");
-    CC1Args.push_back("+multivalue");
-    CC1Args.push_back("-target-feature");
-    CC1Args.push_back("+reference-types");
   }
 
   for (const Arg *A : DriverArgs.filtered(options::OPT_mllvm)) {
@@ -440,23 +408,6 @@ void WebAssembly::addClangTargetOptions(const ArgList &DriverArgs,
       CC1Args.push_back("+exception-handling");
       // Backend needs '-exception-model=wasm' to use Wasm EH instructions
       CC1Args.push_back("-exception-model=wasm");
-
-      // New Wasm EH spec (adopted in Oct 2023) requires multivalue and
-      // reference-types.
-      if (DriverArgs.hasFlag(options::OPT_mno_multivalue,
-                             options::OPT_mmultivalue, false)) {
-        getDriver().Diag(diag::err_drv_argument_not_allowed_with)
-            << "-mllvm -wasm-enable-sjlj" << "-mno-multivalue";
-      }
-      if (DriverArgs.hasFlag(options::OPT_mno_reference_types,
-                             options::OPT_mreference_types, false)) {
-        getDriver().Diag(diag::err_drv_argument_not_allowed_with)
-            << "-mllvm -wasm-enable-sjlj" << "-mno-reference-types";
-      }
-      CC1Args.push_back("-target-feature");
-      CC1Args.push_back("+multivalue");
-      CC1Args.push_back("-target-feature");
-      CC1Args.push_back("+reference-types");
     }
   }
 }

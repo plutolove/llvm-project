@@ -15,7 +15,6 @@
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
-#include "lldb/Utility/RealpathPrefixes.h"
 #include "lldb/Utility/StreamString.h"
 #include <optional>
 
@@ -46,16 +45,14 @@ BreakpointResolverSP BreakpointResolverFileLine::CreateFromStructuredData(
   success = options_dict.GetValueForKeyAsString(GetKey(OptionNames::FileName),
                                                 filename);
   if (!success) {
-    error =
-        Status::FromErrorString("BRFL::CFSD: Couldn't find filename entry.");
+    error.SetErrorString("BRFL::CFSD: Couldn't find filename entry.");
     return nullptr;
   }
 
   success = options_dict.GetValueForKeyAsInteger(
       GetKey(OptionNames::LineNumber), line);
   if (!success) {
-    error =
-        Status::FromErrorString("BRFL::CFSD: Couldn't find line number entry.");
+    error.SetErrorString("BRFL::CFSD: Couldn't find line number entry.");
     return nullptr;
   }
 
@@ -69,24 +66,21 @@ BreakpointResolverSP BreakpointResolverFileLine::CreateFromStructuredData(
   success = options_dict.GetValueForKeyAsBoolean(GetKey(OptionNames::Inlines),
                                                  check_inlines);
   if (!success) {
-    error = Status::FromErrorString(
-        "BRFL::CFSD: Couldn't find check inlines entry.");
+    error.SetErrorString("BRFL::CFSD: Couldn't find check inlines entry.");
     return nullptr;
   }
 
   success = options_dict.GetValueForKeyAsBoolean(
       GetKey(OptionNames::SkipPrologue), skip_prologue);
   if (!success) {
-    error = Status::FromErrorString(
-        "BRFL::CFSD: Couldn't find skip prologue entry.");
+    error.SetErrorString("BRFL::CFSD: Couldn't find skip prologue entry.");
     return nullptr;
   }
 
   success = options_dict.GetValueForKeyAsBoolean(
       GetKey(OptionNames::ExactMatch), exact_match);
   if (!success) {
-    error =
-        Status::FromErrorString("BRFL::CFSD: Couldn't find exact match entry.");
+    error.SetErrorString("BRFL::CFSD: Couldn't find exact match entry.");
     return nullptr;
   }
 
@@ -153,9 +147,8 @@ void BreakpointResolverFileLine::FilterContexts(SymbolContextList &sc_list) {
     else
       continue;
 
-    if (file != sc.line_entry.GetFile()) {
-      LLDB_LOG(log, "unexpected symbol context file {0}",
-               sc.line_entry.GetFile());
+    if (file != sc.line_entry.file) {
+      LLDB_LOG(log, "unexpected symbol context file {0}", sc.line_entry.file);
       continue;
     }
 
@@ -204,16 +197,16 @@ void BreakpointResolverFileLine::DeduceSourceMapping(
     return;
 
   Log *log = GetLog(LLDBLog::Breakpoints);
+  const llvm::StringRef path_separator = llvm::sys::path::get_separator(
+      m_location_spec.GetFileSpec().GetPathStyle());
   // Check if "b" is a suffix of "a".
   // And return std::nullopt if not or the new path
   // of "a" after consuming "b" from the back.
   auto check_suffix =
-      [](llvm::StringRef a, llvm::StringRef b,
-         bool case_sensitive) -> std::optional<llvm::StringRef> {
+      [path_separator](llvm::StringRef a, llvm::StringRef b,
+                       bool case_sensitive) -> std::optional<llvm::StringRef> {
     if (case_sensitive ? a.consume_back(b) : a.consume_back_insensitive(b)) {
-      // Note sc_file_dir and request_file_dir below are normalized
-      // and always contain the path separator '/'.
-      if (a.empty() || a.ends_with("/")) {
+      if (a.empty() || a.ends_with(path_separator)) {
         return a;
       }
     }
@@ -230,7 +223,7 @@ void BreakpointResolverFileLine::DeduceSourceMapping(
 
   const bool case_sensitive = request_file.IsCaseSensitive();
   for (const SymbolContext &sc : sc_list) {
-    FileSpec sc_file = sc.line_entry.GetFile();
+    FileSpec sc_file = sc.line_entry.file;
 
     if (FileSpec::Equal(sc_file, request_file, /*full*/ true))
       continue;
@@ -296,24 +289,15 @@ Searcher::CallbackReturn BreakpointResolverFileLine::SearchCallback(
   const uint32_t line = m_location_spec.GetLine().value_or(0);
   const std::optional<uint16_t> column = m_location_spec.GetColumn();
 
-  Target &target = GetBreakpoint()->GetTarget();
-  RealpathPrefixes realpath_prefixes = target.GetSourceRealpathPrefixes();
-
   const size_t num_comp_units = context.module_sp->GetNumCompileUnits();
   for (size_t i = 0; i < num_comp_units; i++) {
     CompUnitSP cu_sp(context.module_sp->GetCompileUnitAtIndex(i));
     if (cu_sp) {
       if (filter.CompUnitPasses(*cu_sp))
         cu_sp->ResolveSymbolContext(m_location_spec, eSymbolContextEverything,
-                                    sc_list, &realpath_prefixes);
+                                    sc_list);
     }
   }
-
-  // Gather stats into the Target
-  target.GetStatistics().IncreaseSourceRealpathAttemptCount(
-      realpath_prefixes.GetSourceRealpathAttemptCount());
-  target.GetStatistics().IncreaseSourceRealpathCompatibleCount(
-      realpath_prefixes.GetSourceRealpathCompatibleCount());
 
   FilterContexts(sc_list);
 

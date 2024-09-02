@@ -297,8 +297,7 @@ public:
   using MemoryMemberSet = SmallPtrSet<const MemoryMemberType *, 2>;
 
   explicit CongruenceClass(unsigned ID) : ID(ID) {}
-  CongruenceClass(unsigned ID, std::pair<Value *, unsigned int> Leader,
-                  const Expression *E)
+  CongruenceClass(unsigned ID, Value *Leader, const Expression *E)
       : ID(ID), RepLeader(Leader), DefiningExpr(E) {}
 
   unsigned getID() const { return ID; }
@@ -312,23 +311,15 @@ public:
   }
 
   // Leader functions
-  Value *getLeader() const { return RepLeader.first; }
-  void setLeader(std::pair<Value *, unsigned int> Leader) {
-    RepLeader = Leader;
-  }
+  Value *getLeader() const { return RepLeader; }
+  void setLeader(Value *Leader) { RepLeader = Leader; }
   const std::pair<Value *, unsigned int> &getNextLeader() const {
     return NextLeader;
   }
   void resetNextLeader() { NextLeader = {nullptr, ~0}; }
-  bool addPossibleLeader(std::pair<Value *, unsigned int> LeaderPair) {
-    if (LeaderPair.second < RepLeader.second) {
-      NextLeader = RepLeader;
-      RepLeader = LeaderPair;
-      return true;
-    } else if (LeaderPair.second < NextLeader.second) {
+  void addPossibleNextLeader(std::pair<Value *, unsigned int> LeaderPair) {
+    if (LeaderPair.second < NextLeader.second)
       NextLeader = LeaderPair;
-    }
-    return false;
   }
 
   Value *getStoredValue() const { return RepStoredValue; }
@@ -401,13 +392,11 @@ public:
 private:
   unsigned ID;
 
-  // Representative leader and its corresponding RPO number.
-  // The leader must have the lowest RPO number.
-  std::pair<Value *, unsigned int> RepLeader = {nullptr, ~0U};
+  // Representative leader.
+  Value *RepLeader = nullptr;
 
-  // The most dominating leader after our current leader (given by the RPO
-  // number), because the member set is not sorted and is expensive to keep
-  // sorted all the time.
+  // The most dominating leader after our current leader, because the member set
+  // is not sorted and is expensive to keep sorted all the time.
   std::pair<Value *, unsigned int> NextLeader = {nullptr, ~0U};
 
   // If this is represented by a store, the value of the store.
@@ -540,11 +529,7 @@ class NewGVN {
   // IR.
   SmallPtrSet<const Instruction *, 8> PHINodeUses;
 
-  // The cached results, in general, are only valid for the specific block where
-  // they were computed. The unsigned part of the key is a unique block
-  // identifier
-  DenseMap<std::pair<const Value *, unsigned>, bool> OpSafeForPHIOfOps;
-  unsigned CacheIdx;
+  DenseMap<const Value *, bool> OpSafeForPHIOfOps;
 
   // Map a temporary instruction we created to a parent block.
   DenseMap<const Value *, BasicBlock *> TempToBlock;
@@ -746,19 +731,7 @@ private:
 
   // Congruence class handling.
   CongruenceClass *createCongruenceClass(Value *Leader, const Expression *E) {
-    // Set RPO to 0 for values that are always available (constants and function
-    // args). These should always be made leader.
-    unsigned LeaderDFS = 0;
-
-    // If Leader is not specified, either we have a memory class or the leader
-    // will be set later. Otherwise, if Leader is an Instruction, set LeaderDFS
-    // to its RPO number.
-    if (!Leader)
-      LeaderDFS = ~0;
-    else if (auto *I = dyn_cast<Instruction>(Leader))
-      LeaderDFS = InstrToDFSNum(I);
-    auto *result =
-        new CongruenceClass(NextCongruenceNum++, {Leader, LeaderDFS}, E);
+    auto *result = new CongruenceClass(NextCongruenceNum++, Leader, E);
     CongruenceClasses.emplace_back(result);
     return result;
   }
@@ -919,7 +892,7 @@ private:
 
   // Debug counter info.  When verifying, we have to reset the value numbering
   // debug counter to the same state it started in to get the same results.
-  DebugCounter::CounterState StartingVNCounter;
+  int64_t StartingVNCounter = 0;
 };
 
 } // end anonymous namespace
@@ -1226,7 +1199,7 @@ NewGVN::ExprResult NewGVN::createExpression(Instruction *I) const {
   } else if (auto *GEPI = dyn_cast<GetElementPtrInst>(I)) {
     Value *V = simplifyGEPInst(GEPI->getSourceElementType(), *E->op_begin(),
                                ArrayRef(std::next(E->op_begin()), E->op_end()),
-                               GEPI->getNoWrapFlags(), Q);
+                               GEPI->isInBounds(), Q);
     if (auto Simplified = checkExprResults(E, I, V))
       return Simplified;
   } else if (AllConstant) {
@@ -2271,13 +2244,8 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I, const Expression *E,
   OldClass->erase(I);
   NewClass->insert(I);
 
-  // Ensure that the leader has the lowest RPO. If the leader changed notify all
-  // members of the class.
-  if (NewClass->getLeader() != I &&
-      NewClass->addPossibleLeader({I, InstrToDFSNum(I)})) {
-    markValueLeaderChangeTouched(NewClass);
-  }
-
+  if (NewClass->getLeader() != I)
+    NewClass->addPossibleNextLeader({I, InstrToDFSNum(I)});
   // Handle our special casing of stores.
   if (auto *SI = dyn_cast<StoreInst>(I)) {
     OldClass->decStoreCount();
@@ -2301,7 +2269,7 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I, const Expression *E,
                           << " because store joined class\n");
         // If we changed the leader, we have to mark it changed because we don't
         // know what it will do to symbolic evaluation.
-        NewClass->setLeader({SI, InstrToDFSNum(SI)});
+        NewClass->setLeader(SI);
       }
       // We rely on the code below handling the MemoryAccess change.
     }
@@ -2347,8 +2315,7 @@ void NewGVN::moveValueToNewCongruenceClass(Instruction *I, const Expression *E,
       if (OldClass->getStoredValue())
         OldClass->setStoredValue(nullptr);
     }
-    OldClass->setLeader({getNextValueLeader(OldClass),
-                         InstrToDFSNum(getNextValueLeader(OldClass))});
+    OldClass->setLeader(getNextValueLeader(OldClass));
     OldClass->resetNextLeader();
     markValueLeaderChangeTouched(OldClass);
   }
@@ -2387,15 +2354,15 @@ void NewGVN::performCongruenceFinding(Instruction *I, const Expression *E) {
 
       // Constants and variables should always be made the leader.
       if (const auto *CE = dyn_cast<ConstantExpression>(E)) {
-        NewClass->setLeader({CE->getConstantValue(), 0});
+        NewClass->setLeader(CE->getConstantValue());
       } else if (const auto *SE = dyn_cast<StoreExpression>(E)) {
         StoreInst *SI = SE->getStoreInst();
-        NewClass->setLeader({SI, InstrToDFSNum(SI)});
+        NewClass->setLeader(SI);
         NewClass->setStoredValue(SE->getStoredValue());
         // The RepMemoryAccess field will be filled in properly by the
         // moveValueToNewCongruenceClass call.
       } else {
-        NewClass->setLeader({I, InstrToDFSNum(I)});
+        NewClass->setLeader(I);
       }
       assert(!isa<VariableExpression>(E) &&
              "VariableExpression should have been handled already");
@@ -2558,14 +2525,18 @@ void NewGVN::processOutgoingEdges(Instruction *TI, BasicBlock *B) {
       BasicBlock *TargetBlock = Case.getCaseSuccessor();
       updateReachableEdge(B, TargetBlock);
     } else {
-      for (BasicBlock *TargetBlock : successors(SI->getParent()))
+      for (unsigned i = 0, e = SI->getNumSuccessors(); i != e; ++i) {
+        BasicBlock *TargetBlock = SI->getSuccessor(i);
         updateReachableEdge(B, TargetBlock);
+      }
     }
   } else {
     // Otherwise this is either unconditional, or a type we have no
     // idea about. Just mark successors as reachable.
-    for (BasicBlock *TargetBlock : successors(TI->getParent()))
+    for (unsigned i = 0, e = TI->getNumSuccessors(); i != e; ++i) {
+      BasicBlock *TargetBlock = TI->getSuccessor(i);
       updateReachableEdge(B, TargetBlock);
+    }
 
     // This also may be a memory defining terminator, in which case, set it
     // equivalent only to itself.
@@ -2629,19 +2600,19 @@ bool NewGVN::OpIsSafeForPHIOfOps(Value *V, const BasicBlock *PHIBlock,
     if (!isa<Instruction>(I))
       continue;
 
-    auto OISIt = OpSafeForPHIOfOps.find({I, CacheIdx});
+    auto OISIt = OpSafeForPHIOfOps.find(I);
     if (OISIt != OpSafeForPHIOfOps.end())
       return OISIt->second;
 
     // Keep walking until we either dominate the phi block, or hit a phi, or run
     // out of things to check.
     if (DT->properlyDominates(getBlockForValue(I), PHIBlock)) {
-      OpSafeForPHIOfOps.insert({{I, CacheIdx}, true});
+      OpSafeForPHIOfOps.insert({I, true});
       continue;
     }
     // PHI in the same block.
     if (isa<PHINode>(I) && getBlockForValue(I) == PHIBlock) {
-      OpSafeForPHIOfOps.insert({{I, CacheIdx}, false});
+      OpSafeForPHIOfOps.insert({I, false});
       return false;
     }
 
@@ -2660,10 +2631,10 @@ bool NewGVN::OpIsSafeForPHIOfOps(Value *V, const BasicBlock *PHIBlock,
       if (!isa<Instruction>(Op))
         continue;
       // Stop now if we find an unsafe operand.
-      auto OISIt = OpSafeForPHIOfOps.find({OrigI, CacheIdx});
+      auto OISIt = OpSafeForPHIOfOps.find(OrigI);
       if (OISIt != OpSafeForPHIOfOps.end()) {
         if (!OISIt->second) {
-          OpSafeForPHIOfOps.insert({{I, CacheIdx}, false});
+          OpSafeForPHIOfOps.insert({I, false});
           return false;
         }
         continue;
@@ -2673,7 +2644,7 @@ bool NewGVN::OpIsSafeForPHIOfOps(Value *V, const BasicBlock *PHIBlock,
       Worklist.push_back(cast<Instruction>(Op));
     }
   }
-  OpSafeForPHIOfOps.insert({{V, CacheIdx}, true});
+  OpSafeForPHIOfOps.insert({V, true});
   return true;
 }
 
@@ -3282,6 +3253,7 @@ void NewGVN::verifyMemoryCongruency() const {
         return ReachableEdges.count(
                    {FirstMP->getIncomingBlock(U), FirstMP->getBlock()}) &&
                isa<MemoryDef>(U);
+
       };
       // All arguments should in the same class, ignoring unreachable arguments
       auto FilteredPhiArgs =
@@ -3306,7 +3278,7 @@ void NewGVN::verifyIterationSettled(Function &F) {
 #ifndef NDEBUG
   LLVM_DEBUG(dbgs() << "Beginning iteration verification\n");
   if (DebugCounter::isCounterSet(VNCounter))
-    DebugCounter::setCounterState(VNCounter, StartingVNCounter);
+    DebugCounter::setCounterValue(VNCounter, StartingVNCounter);
 
   // Note that we have to store the actual classes, as we may change existing
   // classes during iteration.  This is because our memory iteration propagation
@@ -3325,7 +3297,6 @@ void NewGVN::verifyIterationSettled(Function &F) {
   TouchedInstructions.set();
   TouchedInstructions.reset(0);
   OpSafeForPHIOfOps.clear();
-  CacheIdx = 0;
   iterateTouchedInstructions();
   DenseSet<std::pair<const CongruenceClass *, const CongruenceClass *>>
       EqualClasses;
@@ -3429,8 +3400,6 @@ void NewGVN::iterateTouchedInstructions() {
                             << " because it is unreachable\n");
           continue;
         }
-        // Use the appropriate cache for "OpIsSafeForPHIOfOps".
-        CacheIdx = RPOOrdering.lookup(DT->getNode(CurrBlock)) - 1;
         updateProcessedCount(CurrBlock);
       }
       // Reset after processing (because we may mark ourselves as touched when
@@ -3454,7 +3423,7 @@ void NewGVN::iterateTouchedInstructions() {
 // This is the main transformation entry point.
 bool NewGVN::runGVN() {
   if (DebugCounter::isCounterSet(VNCounter))
-    StartingVNCounter = DebugCounter::getCounterState(VNCounter);
+    StartingVNCounter = DebugCounter::getCounterValue(VNCounter);
   bool Changed = false;
   NumFuncArgs = F.arg_size();
   MSSAWalker = MSSA->getWalker();
@@ -3510,8 +3479,6 @@ bool NewGVN::runGVN() {
   LLVM_DEBUG(dbgs() << "Block " << getBlockName(&F.getEntryBlock())
                     << " marked reachable\n");
   ReachableBlocks.insert(&F.getEntryBlock());
-  // Use index corresponding to entry block.
-  CacheIdx = 0;
 
   iterateTouchedInstructions();
   verifyMemoryCongruency();
@@ -3754,7 +3721,7 @@ void NewGVN::deleteInstructionsInBlock(BasicBlock *BB) {
   new StoreInst(
       PoisonValue::get(Int8Ty),
       Constant::getNullValue(PointerType::getUnqual(BB->getContext())),
-      BB->getTerminator()->getIterator());
+      BB->getTerminator());
 }
 
 void NewGVN::markInstructionForDeletion(Instruction *I) {
@@ -4052,7 +4019,7 @@ bool NewGVN::eliminateInstructions(Function &F) {
           // dominated defs as dead.
           if (Def) {
             // For anything in this case, what and how we value number
-            // guarantees that any side-effects that would have occurred (ie
+            // guarantees that any side-effets that would have occurred (ie
             // throwing, etc) can be proven to either still occur (because it's
             // dominated by something that has the same side-effects), or never
             // occur.  Otherwise, we would not have been able to prove it value
@@ -4270,7 +4237,7 @@ PreservedAnalyses NewGVNPass::run(Function &F, AnalysisManager<Function> &AM) {
   auto &AA = AM.getResult<AAManager>(F);
   auto &MSSA = AM.getResult<MemorySSAAnalysis>(F).getMSSA();
   bool Changed =
-      NewGVN(F, &DT, &AC, &TLI, &AA, &MSSA, F.getDataLayout())
+      NewGVN(F, &DT, &AC, &TLI, &AA, &MSSA, F.getParent()->getDataLayout())
           .runGVN();
   if (!Changed)
     return PreservedAnalyses::all();

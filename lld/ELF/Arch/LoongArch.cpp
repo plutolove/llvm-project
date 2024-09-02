@@ -11,7 +11,6 @@
 #include "Symbols.h"
 #include "SyntheticSections.h"
 #include "Target.h"
-#include "llvm/BinaryFormat/ELF.h"
 #include "llvm/Support/LEB128.h"
 
 using namespace llvm;
@@ -79,7 +78,7 @@ enum Reg {
 //
 // Here a "page" is in fact just another way to refer to the 12-bit range
 // allowed by the immediate field of the addi/ld/st instructions, and not
-// related to the system or the kernel's actual page size. The semantics happen
+// related to the system or the kernel's actual page size. The sematics happens
 // to match the AArch64 `adrp`, so the concept of "page" is borrowed here.
 static uint64_t getLoongArchPage(uint64_t p) {
   return p & ~static_cast<uint64_t>(0xfff);
@@ -90,7 +89,7 @@ static uint32_t lo12(uint32_t val) { return val & 0xfff; }
 // Calculate the adjusted page delta between dest and PC.
 uint64_t elf::getLoongArchPageDelta(uint64_t dest, uint64_t pc, RelType type) {
   // Note that if the sequence being relocated is `pcalau12i + addi.d + lu32i.d
-  // + lu52i.d`, they must be adjacent so that we can infer the PC of
+  // + lu52i.d`, they must be adjancent so that we can infer the PC of
   // `pcalau12i` when calculating the page delta for the other two instructions
   // (lu32i.d and lu52i.d). Compensate all the sign-extensions is a bit
   // complicated. Just use psABI recommended algorithm.
@@ -99,13 +98,11 @@ uint64_t elf::getLoongArchPageDelta(uint64_t dest, uint64_t pc, RelType type) {
   case R_LARCH_PCALA64_LO20:
   case R_LARCH_GOT64_PC_LO20:
   case R_LARCH_TLS_IE64_PC_LO20:
-  case R_LARCH_TLS_DESC64_PC_LO20:
     pcalau12i_pc = pc - 8;
     break;
   case R_LARCH_PCALA64_HI12:
   case R_LARCH_GOT64_PC_HI12:
   case R_LARCH_TLS_IE64_PC_HI12:
-  case R_LARCH_TLS_DESC64_PC_HI12:
     pcalau12i_pc = pc - 12;
     break;
   default:
@@ -193,13 +190,11 @@ LoongArch::LoongArch() {
     tlsModuleIndexRel = R_LARCH_TLS_DTPMOD64;
     tlsOffsetRel = R_LARCH_TLS_DTPREL64;
     tlsGotRel = R_LARCH_TLS_TPREL64;
-    tlsDescRel = R_LARCH_TLS_DESC64;
   } else {
     symbolicRel = R_LARCH_32;
     tlsModuleIndexRel = R_LARCH_TLS_DTPMOD32;
     tlsOffsetRel = R_LARCH_TLS_DTPREL32;
     tlsGotRel = R_LARCH_TLS_TPREL32;
-    tlsDescRel = R_LARCH_TLS_DESC32;
   }
 
   gotRel = symbolicRel;
@@ -299,10 +294,6 @@ int64_t LoongArch::getImplicitAddend(const uint8_t *buf, RelType type) const {
   case R_LARCH_JUMP_SLOT:
     // These relocations are defined as not having an implicit addend.
     return 0;
-  case R_LARCH_TLS_DESC32:
-    return read32le(buf + 4);
-  case R_LARCH_TLS_DESC64:
-    return read64le(buf + 8);
   }
 }
 
@@ -349,8 +340,7 @@ void LoongArch::writePltHeader(uint8_t *buf) const {
   write32le(buf + 0, insn(PCADDU12I, R_T2, hi20(offset), 0));
   write32le(buf + 4, insn(sub, R_T1, R_T1, R_T3));
   write32le(buf + 8, insn(ld, R_T3, R_T2, lo12(offset)));
-  write32le(buf + 12,
-            insn(addi, R_T1, R_T1, lo12(-ctx.target->pltHeaderSize - 12)));
+  write32le(buf + 12, insn(addi, R_T1, R_T1, lo12(-target->pltHeaderSize - 12)));
   write32le(buf + 16, insn(addi, R_T0, R_T2, lo12(offset)));
   write32le(buf + 20, insn(srli, R_T1, R_T1, config->is64 ? 1 : 2));
   write32le(buf + 24, insn(ld, R_T0, R_T0, config->wordsize));
@@ -375,8 +365,8 @@ void LoongArch::writePlt(uint8_t *buf, const Symbol &sym,
 }
 
 RelType LoongArch::getDynRel(RelType type) const {
-  return type == ctx.target->symbolicRel ? type
-                                         : static_cast<RelType>(R_LARCH_NONE);
+  return type == target->symbolicRel ? type
+                                     : static_cast<RelType>(R_LARCH_NONE);
 }
 
 RelExpr LoongArch::getRelExpr(const RelType type, const Symbol &s,
@@ -409,9 +399,7 @@ RelExpr LoongArch::getRelExpr(const RelType type, const Symbol &s,
   case R_LARCH_TLS_TPREL32:
   case R_LARCH_TLS_TPREL64:
   case R_LARCH_TLS_LE_HI20:
-  case R_LARCH_TLS_LE_HI20_R:
   case R_LARCH_TLS_LE_LO12:
-  case R_LARCH_TLS_LE_LO12_R:
   case R_LARCH_TLS_LE64_LO20:
   case R_LARCH_TLS_LE64_HI12:
     return R_TPREL;
@@ -494,30 +482,10 @@ RelExpr LoongArch::getRelExpr(const RelType type, const Symbol &s,
     return R_TLSLD_GOT;
   case R_LARCH_TLS_GD_HI20:
     return R_TLSGD_GOT;
-  case R_LARCH_TLS_LE_ADD_R:
   case R_LARCH_RELAX:
     return config->relax ? R_RELAX_HINT : R_NONE;
   case R_LARCH_ALIGN:
     return R_RELAX_HINT;
-  case R_LARCH_TLS_DESC_PC_HI20:
-  case R_LARCH_TLS_DESC64_PC_LO20:
-  case R_LARCH_TLS_DESC64_PC_HI12:
-    return R_LOONGARCH_TLSDESC_PAGE_PC;
-  case R_LARCH_TLS_DESC_PC_LO12:
-  case R_LARCH_TLS_DESC_LD:
-  case R_LARCH_TLS_DESC_HI20:
-  case R_LARCH_TLS_DESC_LO12:
-  case R_LARCH_TLS_DESC64_LO20:
-  case R_LARCH_TLS_DESC64_HI12:
-    return R_TLSDESC;
-  case R_LARCH_TLS_DESC_CALL:
-    return R_TLSDESC_CALL;
-  case R_LARCH_TLS_LD_PCREL20_S2:
-    return R_TLSLD_PC;
-  case R_LARCH_TLS_GD_PCREL20_S2:
-    return R_TLSGD_PC;
-  case R_LARCH_TLS_DESC_PCREL20_S2:
-    return R_TLSDESC_PC;
 
   // Other known relocs that are explicitly unimplemented:
   //
@@ -542,8 +510,6 @@ bool LoongArch::usesOnlyLowPageBits(RelType type) const {
   case R_LARCH_GOT_LO12:
   case R_LARCH_GOT_PC_LO12:
   case R_LARCH_TLS_IE_PC_LO12:
-  case R_LARCH_TLS_DESC_LO12:
-  case R_LARCH_TLS_DESC_PC_LO12:
     return true;
   }
 }
@@ -564,11 +530,7 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
     write64le(loc, val);
     return;
 
-  // Relocs intended for `pcaddi`.
   case R_LARCH_PCREL20_S2:
-  case R_LARCH_TLS_LD_PCREL20_S2:
-  case R_LARCH_TLS_GD_PCREL20_S2:
-  case R_LARCH_TLS_DESC_PCREL20_S2:
     checkInt(loc, val, 22, rel);
     checkAlignment(loc, val, 4, rel);
     write32le(loc, setJ20(read32le(loc), val >> 2));
@@ -593,7 +555,7 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
     return;
 
   case R_LARCH_CALL36: {
-    // This relocation is designed for adjacent pcaddu18i+jirl pairs that
+    // This relocation is designed for adjancent pcaddu18i+jirl pairs that
     // are patched in one time. Because of sign extension of these insns'
     // immediate fields, the relocation range is [-128G - 0x20000, +128G -
     // 0x20000) (of course must be 4-byte aligned).
@@ -632,9 +594,6 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
   case R_LARCH_TLS_LE_LO12:
   case R_LARCH_TLS_IE_PC_LO12:
   case R_LARCH_TLS_IE_LO12:
-  case R_LARCH_TLS_LE_LO12_R:
-  case R_LARCH_TLS_DESC_PC_LO12:
-  case R_LARCH_TLS_DESC_LO12:
     write32le(loc, setK12(read32le(loc), extractBits(val, 11, 0)));
     return;
 
@@ -650,12 +609,7 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
   case R_LARCH_TLS_LD_HI20:
   case R_LARCH_TLS_GD_PC_HI20:
   case R_LARCH_TLS_GD_HI20:
-  case R_LARCH_TLS_DESC_PC_HI20:
-  case R_LARCH_TLS_DESC_HI20:
     write32le(loc, setJ20(read32le(loc), extractBits(val, 31, 12)));
-    return;
-  case R_LARCH_TLS_LE_HI20_R:
-    write32le(loc, setJ20(read32le(loc), extractBits(val + 0x800, 31, 12)));
     return;
 
   // Relocs intended for `lu32i.d`.
@@ -666,8 +620,6 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
   case R_LARCH_TLS_LE64_LO20:
   case R_LARCH_TLS_IE64_PC_LO20:
   case R_LARCH_TLS_IE64_LO20:
-  case R_LARCH_TLS_DESC64_PC_LO20:
-  case R_LARCH_TLS_DESC64_LO20:
     write32le(loc, setJ20(read32le(loc), extractBits(val, 51, 32)));
     return;
 
@@ -679,8 +631,6 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
   case R_LARCH_TLS_LE64_HI12:
   case R_LARCH_TLS_IE64_PC_HI12:
   case R_LARCH_TLS_IE64_HI12:
-  case R_LARCH_TLS_DESC64_PC_HI12:
-  case R_LARCH_TLS_DESC64_HI12:
     write32le(loc, setK12(read32le(loc), extractBits(val, 63, 52)));
     return;
 
@@ -726,18 +676,8 @@ void LoongArch::relocate(uint8_t *loc, const Relocation &rel,
     // no-op
     return;
 
-  case R_LARCH_TLS_LE_ADD_R:
   case R_LARCH_RELAX:
     return; // Ignored (for now)
-
-  case R_LARCH_TLS_DESC_LD:
-    return; // nothing to do.
-  case R_LARCH_TLS_DESC32:
-    write32le(loc + 4, val);
-    return;
-  case R_LARCH_TLS_DESC64:
-    write64le(loc + 8, val);
-    return;
 
   default:
     llvm_unreachable("unknown relocation");
@@ -761,8 +701,8 @@ static bool relax(InputSection &sec) {
     case R_LARCH_ALIGN: {
       const uint64_t addend =
           r.sym->isUndefined() ? Log2_64(r.addend) + 1 : r.addend;
-      const uint64_t allBytes = (1ULL << (addend & 0xff)) - 4;
-      const uint64_t align = 1ULL << (addend & 0xff);
+      const uint64_t allBytes = (1 << (addend & 0xff)) - 4;
+      const uint64_t align = 1 << (addend & 0xff);
       const uint64_t maxBytes = addend >> 8;
       const uint64_t off = loc & (align - 1);
       const uint64_t curBytes = off == 0 ? 0 : align - off;
@@ -829,7 +769,7 @@ bool LoongArch::relaxOnce(int pass) const {
 
   SmallVector<InputSection *, 0> storage;
   bool changed = false;
-  for (OutputSection *osec : ctx.outputSections) {
+  for (OutputSection *osec : outputSections) {
     if (!(osec->flags & SHF_EXECINSTR))
       continue;
     for (InputSection *sec : getInputSections(*osec, storage))
@@ -841,7 +781,7 @@ bool LoongArch::relaxOnce(int pass) const {
 void LoongArch::finalizeRelax(int passes) const {
   log("relaxation passes: " + Twine(passes));
   SmallVector<InputSection *, 0> storage;
-  for (OutputSection *osec : ctx.outputSections) {
+  for (OutputSection *osec : outputSections) {
     if (!(osec->flags & SHF_EXECINSTR))
       continue;
     for (InputSection *sec : getInputSections(*osec, storage)) {

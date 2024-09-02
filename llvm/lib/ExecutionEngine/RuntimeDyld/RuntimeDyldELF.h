@@ -16,6 +16,8 @@
 #include "RuntimeDyldImpl.h"
 #include "llvm/ADT/DenseMap.h"
 
+using namespace llvm;
+
 namespace llvm {
 namespace object {
 class ELFObjectFileBase;
@@ -231,4 +233,4 @@ public:
 
 } // end namespace llvm
 
-#endif // LLVM_LIB_EXECUTIONENGINE_RUNTIMEDYLD_RUNTIMEDYLDELF_H
+#endif

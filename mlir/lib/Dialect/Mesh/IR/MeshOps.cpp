@@ -7,9 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Dialect/Mesh/IR/MeshOps.h"
-
 #include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Mesh/IR/MeshDialect.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -17,24 +15,24 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/IR/TypeUtilities.h"
-#include "mlir/IR/Value.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
-#include "llvm/Support/Casting.h"
 #include <algorithm>
 #include <functional>
 #include <iterator>
 #include <numeric>
 #include <optional>
+#include <string>
 #include <utility>
 
 #define DEBUG_TYPE "mesh-ops"
@@ -43,7 +41,25 @@
 using namespace mlir;
 using namespace mlir::mesh;
 
-#include "mlir/Dialect/Mesh/IR/MeshDialect.cpp.inc"
+#include "mlir/Dialect/Mesh/IR/MeshOpsDialect.cpp.inc"
+
+template <typename It>
+static It canonicalizeSetAsArray(It begin, It end) {
+  llvm::sort(begin, end);
+  return std::unique(begin, end);
+}
+
+template <typename R>
+static auto canonicalizeSetAsArray(R &&range) {
+  return canonicalizeSetAsArray(adl_begin(range), adl_end(range));
+}
+
+template <typename T>
+static SmallVector<T> &canonicalizeSetAsVector(SmallVector<T> &vec) {
+  auto newEnd = canonicalizeSetAsArray(vec);
+  vec.resize(newEnd - vec.begin());
+  return vec;
+}
 
 namespace {
 
@@ -85,11 +101,7 @@ void MeshDialect::initialize() {
       >();
   addAttributes<
 #define GET_ATTRDEF_LIST
-#include "mlir/Dialect/Mesh/IR/MeshAttributes.cpp.inc"
-      >();
-  addTypes<
-#define GET_TYPEDEF_LIST
-#include "mlir/Dialect/Mesh/IR/MeshTypes.cpp.inc"
+#include "mlir/Dialect/Mesh/IR/MeshOpsAttributes.cpp.inc"
       >();
 }
 
@@ -102,10 +114,10 @@ Operation *MeshDialect::materializeConstant(OpBuilder &builder, Attribute value,
 // Mesh utilities
 //===----------------------------------------------------------------------===//
 
-static FailureOr<MeshOp> getMeshAndVerify(Operation *op,
-                                          FlatSymbolRefAttr meshSymbol,
-                                          SymbolTableCollection &symbolTable) {
-  mesh::MeshOp mesh = getMeshOrNull(op, meshSymbol, symbolTable);
+static FailureOr<ClusterOp> getMesh(Operation *op, FlatSymbolRefAttr meshSymbol,
+                                    SymbolTableCollection &symbolTable) {
+  mesh::ClusterOp mesh =
+      symbolTable.lookupNearestSymbolFrom<mesh::ClusterOp>(op, meshSymbol);
   if (!mesh) {
     return op->emitError() << "Undefined required mesh symbol \""
                            << meshSymbol.getValue() << "\".";
@@ -132,7 +144,7 @@ bool isUnique(It begin, It end) {
 }
 
 static LogicalResult verifyMeshAxes(Location loc, ArrayRef<MeshAxis> axes,
-                                    MeshOp mesh) {
+                                    ClusterOp mesh) {
   SmallVector<MeshAxis> sorted = llvm::to_vector(axes);
   llvm::sort(sorted);
   if (!isUnique(sorted.begin(), sorted.end())) {
@@ -152,198 +164,50 @@ static LogicalResult verifyMeshAxes(Location loc, ArrayRef<MeshAxis> axes,
   return success();
 }
 
-template <typename Op>
-static FailureOr<MeshOp>
-getMeshAndVerifyAxes(Op op, SymbolTableCollection &symbolTable) {
-  auto mesh =
-      ::getMeshAndVerify(op.getOperation(), op.getMeshAttr(), symbolTable);
-  if (failed(mesh)) {
-    return failure();
-  }
-  if (failed(verifyMeshAxes(op.getLoc(), op.getMeshAxes(), mesh.value()))) {
-    return failure();
-  }
-  return mesh;
+bool mesh::isReductionLoop(IteratorType iType) {
+  return iType != IteratorType::Parallel && iType != IteratorType::Invalid;
 }
 
-template <typename InShape, typename MeshShape, typename SplitAxes,
-          typename OutShape>
-static void shardShape(const InShape &inShape, const MeshShape &meshShape,
-                       const SplitAxes &splitAxes, OutShape &outShape,
-                       ArrayRef<int64_t> shardedDimsSizes = {},
-                       ArrayRef<int64_t> haloSizes = {}) {
-  std::copy(llvm::adl_begin(inShape), llvm::adl_end(inShape),
-            llvm::adl_begin(outShape));
-
-  if (!shardedDimsSizes.empty()) {
-    for (auto [tensorAxis, innerSplitAxes] : llvm::enumerate(splitAxes)) {
-      if (innerSplitAxes.empty()) {
-#ifndef NDEBUG
-        for (auto dimSz : shardedDimsSizes) {
-          auto inAxis = dimSz % inShape.size();
-          assert(inShape[inAxis] == dimSz || dimSz == ShapedType::kDynamic ||
-                 inShape[inAxis] == ShapedType::kDynamic);
-        }
-#endif // NDEBUG
-      } else {
-        // find sharded dims in sharded_dims_sizes with same static size on
-        // all devices. Use kDynamic for dimensions with dynamic or non-uniform
-        // sizes in sharded_dims_sizes.
-        auto sz = shardedDimsSizes[tensorAxis];
-        bool same = true;
-        for (size_t i = tensorAxis + inShape.size();
-             i < shardedDimsSizes.size(); i += inShape.size()) {
-          if (shardedDimsSizes[i] != sz) {
-            same = false;
-            break;
-          }
-        }
-        outShape[tensorAxis] = same ? sz : ShapedType::kDynamic;
-      }
-    }
-  } else {
-    for (auto [tensorAxis, innerSplitAxes] : llvm::enumerate(splitAxes)) {
-      outShape[tensorAxis] = shardDimension(
-          inShape[tensorAxis],
-          collectiveProcessGroupSize(innerSplitAxes.asArrayRef(), meshShape));
-    }
-
-    if (!haloSizes.empty()) {
-      // add halo sizes if requested
-      int haloAxis = 0;
-      for (auto [tensorAxis, innerSplitAxes] : llvm::enumerate(splitAxes)) {
-        if (!ShapedType::isDynamic(outShape[tensorAxis]) &&
-            !innerSplitAxes.empty()) {
-          if (haloSizes[haloAxis * 2] >= 0 &&
-              haloSizes[haloAxis * 2 + 1] >= 0) {
-            outShape[tensorAxis] +=
-                haloSizes[haloAxis * 2] + haloSizes[haloAxis * 2 + 1];
-            ++haloAxis;
-          } else {
-            outShape[tensorAxis] = ShapedType::kDynamic;
-          }
-        }
-      }
-    }
-  }
+bool mesh::areReductionAndPartialMatch(IteratorType iType, Partial partial) {
+  return (partial == Partial::Generic &&
+          iType == IteratorType::ReductionGeneric) ||
+         (partial == Partial::Sum && iType == IteratorType::ReductionSum) ||
+         (partial == Partial::Max && iType == IteratorType::ReductionMax) ||
+         (partial == Partial::Min && iType == IteratorType::ReductionMin);
 }
 
-ShapedType mesh::shardShapedType(ShapedType shape, MeshOp mesh,
-                                 MeshSharding sharding) {
-  using Dim = std::decay_t<decltype(shape.getDimSize(0))>;
-  SmallVector<Dim> resShapeArr(shape.getShape().size());
-  shardShape(shape.getShape(), mesh.getShape(), sharding.getSplitAxes(),
-             resShapeArr, sharding.getStaticShardedDimsSizes(),
-             sharding.getStaticHaloSizes());
-  return shape.clone(resShapeArr);
-}
-
-Type mesh::shardType(Type type, MeshOp mesh, MeshSharding sharding) {
-  RankedTensorType rankedTensorType = dyn_cast<RankedTensorType>(type);
-  if (rankedTensorType) {
-    return shardShapedType(rankedTensorType, mesh, sharding);
+Partial mesh::getPartialTypeFromReduction(IteratorType iType) {
+  switch (iType) {
+  case IteratorType::ReductionGeneric:
+    return Partial::Generic;
+  case IteratorType::ReductionSum:
+    return Partial::Sum;
+  case IteratorType::ReductionMax:
+    return Partial::Max;
+  case IteratorType::ReductionMin:
+    return Partial::Min;
+  default:
+    llvm_unreachable("No corresponding partial type can be found");
   }
-  return type;
-}
-
-void mlir::mesh::maybeInsertTargetShardingAnnotation(MeshSharding sharding,
-                                                     OpOperand &operand,
-                                                     OpBuilder &builder) {
-  OpBuilder::InsertionGuard insertionGuard(builder);
-  Value operandValue = operand.get();
-  Operation *operandOp = operand.getOwner();
-  builder.setInsertionPointAfterValue(operandValue);
-  ShardOp shardOp = dyn_cast<ShardOp>(operandOp);
-  if (shardOp && sharding == shardOp.getSharding() &&
-      !shardOp.getAnnotateForUsers()) {
-    // No need for anything the correct sharding is already set.
-    return;
-  }
-
-  auto shardingOp = builder.create<ShardingOp>(operandValue.getLoc(), sharding);
-  auto newShardOp =
-      builder.create<ShardOp>(operandValue.getLoc(), operandValue, shardingOp,
-                              /*annotate_for_users*/ false);
-  IRRewriter rewriter(builder);
-  rewriter.replaceUsesWithIf(
-      operandValue, newShardOp, [operandOp, operandValue](OpOperand &use) {
-        return use.getOwner() == operandOp && use.get() == operandValue;
-      });
-
-  if (!shardOp || shardOp.getAnnotateForUsers()) {
-    return;
-  }
-
-  auto newShardOp2 =
-      builder.create<ShardOp>(operandValue.getLoc(), newShardOp, shardingOp,
-                              /*annotate_for_users*/ true);
-  rewriter.replaceAllUsesExcept(newShardOp, newShardOp2, newShardOp2);
-}
-
-void mlir::mesh::maybeInsertTargetShardingAnnotation(MeshSharding sharding,
-                                                     OpResult result,
-                                                     OpBuilder &builder) {
-  for (auto &use : llvm::make_early_inc_range(result.getUses())) {
-    maybeInsertTargetShardingAnnotation(sharding, use, builder);
-  }
-}
-
-void mlir::mesh::maybeInsertSourceShardingAnnotation(MeshSharding sharding,
-                                                     OpOperand &operand,
-                                                     OpBuilder &builder) {
-  OpBuilder::InsertionGuard insertionGuard(builder);
-  Value operandValue = operand.get();
-  Operation *operandOp = operand.getOwner();
-  Operation *operandSrcOp = operandValue.getDefiningOp();
-  bool isBlockArg = !operandSrcOp;
-  ShardOp shardOp = dyn_cast_or_null<ShardOp>(operandSrcOp);
-
-  if (shardOp && sharding == shardOp.getSharding() &&
-      shardOp.getAnnotateForUsers()) {
-    // No need for anything the correct sharding is already set.
-    return;
-  }
-
-  builder.setInsertionPoint(operandOp);
-  auto shardingOp =
-      builder.create<ShardingOp>(operand.get().getLoc(), sharding);
-  auto newShardOp =
-      builder.create<ShardOp>(operandValue.getLoc(), operandValue, shardingOp,
-                              /*annotate_for_users*/ true);
-  IRRewriter rewriter(builder);
-  rewriter.replaceUsesWithIf(
-      operandValue, newShardOp, [operandOp, operandValue](OpOperand &use) {
-        return use.getOwner() == operandOp && use.get() == operandValue;
-      });
-
-  if (isBlockArg || !shardOp || !shardOp.getAnnotateForUsers()) {
-    // No need for resharding.
-    return;
-  }
-
-  builder.setInsertionPoint(newShardOp);
-  auto newPreceedingShardOp =
-      builder.create<ShardOp>(operandValue.getLoc(), operandValue, shardingOp,
-                              /*annotate_for_users*/ false);
-  rewriter.replaceUsesWithIf(
-      newShardOp.getSrc(), newPreceedingShardOp, [&newShardOp](OpOperand &use) {
-        return use.getOwner() == newShardOp.getOperation();
-      });
 }
 
 //===----------------------------------------------------------------------===//
-// mesh.mesh op
+// mesh.cluster op
 //===----------------------------------------------------------------------===//
 
-LogicalResult MeshOp::verify() {
+LogicalResult ClusterOp::verify() {
   int64_t rank = getRank();
 
   if (rank <= 0)
-    return emitOpError("rank of mesh is expected to be a positive integer");
+    return emitOpError("rank of cluster is expected to be a positive integer");
+
+  if (getShape().size() > size_t(rank))
+    return emitOpError(
+        "rank of shape is not expected to be larger than rank of cluster");
 
   for (int64_t dimSize : getShape()) {
     if (dimSize < 0 && !ShapedType::isDynamic(dimSize))
-      return emitOpError("dimension size of a mesh is expected to be "
+      return emitOpError("dimension size of a mesh cluster is expected to be "
                          "non-negative or dynamic");
   }
 
@@ -351,12 +215,12 @@ LogicalResult MeshOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
-// mesh.mesh_shape op
+// mesh.cluster_shape op
 //===----------------------------------------------------------------------===//
 
 LogicalResult
-MeshShapeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = ::getMeshAndVerify(getOperation(), getMeshAttr(), symbolTable);
+ClusterShapeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto mesh = ::getMesh(getOperation(), getMeshAttr(), symbolTable);
   if (failed(mesh)) {
     return failure();
   }
@@ -374,98 +238,32 @@ MeshShapeOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-void MeshShapeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                        MeshOp mesh) {
-  build(odsBuilder, odsState, mesh, SmallVector<MeshAxis>());
-}
-
-void MeshShapeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                        MeshOp mesh, ArrayRef<MeshAxis> axes) {
+void ClusterShapeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                           ClusterOp mesh) {
   build(odsBuilder, odsState,
-        SmallVector<Type>(axes.empty() ? mesh.getRank() : axes.size(),
-                          odsBuilder.getIndexType()),
-        mesh.getSymName(), MeshAxesAttr::get(odsBuilder.getContext(), axes));
+        SmallVector<Type>(mesh.getRank(), odsBuilder.getIndexType()),
+        mesh.getSymName(),
+        MeshAxesAttr::get(odsBuilder.getContext(), SmallVector<MeshAxis>()));
 }
 
-void MeshShapeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                        StringRef mesh, ArrayRef<MeshAxis> axes) {
-  assert(!axes.empty());
+void ClusterShapeOp::build(OpBuilder &odsBuilder, OperationState &odsState,
+                           StringRef mesh, ArrayRef<MeshAxis> axes) {
   build(odsBuilder, odsState,
         SmallVector<Type>(axes.size(), odsBuilder.getIndexType()), mesh,
         MeshAxesAttr::get(odsBuilder.getContext(), axes));
 }
 
-void MeshShapeOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResults()[0], "mesh_shape");
-}
-
 //===----------------------------------------------------------------------===//
-// mesh.sharding
+// mesh.shard attr
 //===----------------------------------------------------------------------===//
 
-void ShardingOp::build(::mlir::OpBuilder &b, ::mlir::OperationState &odsState,
-                       FlatSymbolRefAttr mesh,
-                       ArrayRef<MeshAxesAttr> split_axes,
-                       ArrayRef<MeshAxis> partial_axes,
-                       mesh::ReductionKind partial_type,
-                       ArrayRef<int64_t> static_halo_sizes,
-                       ArrayRef<int64_t> static_sharded_dims_sizes) {
-  return build(
-      b, odsState, mesh, MeshAxesArrayAttr::get(b.getContext(), split_axes),
-      ::mlir::DenseI16ArrayAttr::get(b.getContext(), partial_axes),
-      ::mlir::mesh::ReductionKindAttr::get(b.getContext(), partial_type),
-      ::mlir::DenseI64ArrayAttr::get(b.getContext(), static_halo_sizes), {},
-      ::mlir::DenseI64ArrayAttr::get(b.getContext(), static_sharded_dims_sizes),
-      {});
-}
+LogicalResult
+MeshShardingAttr::verify(function_ref<InFlightDiagnostic()> emitError,
+                         FlatSymbolRefAttr, ArrayRef<MeshAxesAttr> splitAxes,
+                         ArrayRef<MeshAxis> partialAxes, Partial) {
+  // TODO: At present cluster symbol ref is not verified. This is due to the
+  // difficulty in fetching the corresponding symbol op based on an attribute.
 
-void ShardingOp::build(::mlir::OpBuilder &b, ::mlir::OperationState &odsState,
-                       FlatSymbolRefAttr mesh,
-                       ArrayRef<MeshAxesAttr> split_axes) {
-  return build(
-      b, odsState, mesh, MeshAxesArrayAttr::get(b.getContext(), split_axes), {},
-      ::mlir::mesh::ReductionKindAttr::get(b.getContext(), ReductionKind::Sum),
-      {}, {}, {}, {});
-}
-
-void ShardingOp::build(
-    ::mlir::OpBuilder &b, ::mlir::OperationState &odsState,
-    FlatSymbolRefAttr mesh, ArrayRef<MeshAxesAttr> split_axes,
-    ::mlir::ArrayRef<::mlir::OpFoldResult> halo_sizes,
-    ::mlir::ArrayRef<::mlir::OpFoldResult> sharded_dims_sizes) {
-  mlir::SmallVector<int64_t> staticHalos, staticDims;
-  mlir::SmallVector<mlir::Value> dynamicHalos, dynamicDims;
-  dispatchIndexOpFoldResults(halo_sizes, dynamicHalos, staticHalos);
-  dispatchIndexOpFoldResults(sharded_dims_sizes, dynamicDims, staticDims);
-  return build(
-      b, odsState, mesh, MeshAxesArrayAttr::get(b.getContext(), split_axes), {},
-      ::mlir::mesh::ReductionKindAttr::get(b.getContext(), ReductionKind::Sum),
-      ::mlir::DenseI64ArrayAttr::get(b.getContext(), staticHalos), dynamicHalos,
-      ::mlir::DenseI64ArrayAttr::get(b.getContext(), staticDims), dynamicDims);
-}
-
-void ShardingOp::build(::mlir::OpBuilder &b, ::mlir::OperationState &odsState,
-                       mlir::mesh::MeshSharding from) {
-
-  build(b, odsState, ShardingType::get(b.getContext()), from.getMeshAttr(),
-        MeshAxesArrayAttr::get(b.getContext(), from.getSplitAxes()),
-        from.getPartialAxes().empty()
-            ? DenseI16ArrayAttr()
-            : b.getDenseI16ArrayAttr(from.getPartialAxes()),
-        ::mlir::mesh::ReductionKindAttr::get(b.getContext(),
-                                             from.getPartialType()),
-        from.getStaticShardedDimsSizes().empty()
-            ? DenseI64ArrayAttr()
-            : b.getDenseI64ArrayAttr(from.getStaticShardedDimsSizes()),
-        from.getDynamicShardedDimsSizes(),
-        from.getStaticHaloSizes().empty()
-            ? DenseI64ArrayAttr()
-            : b.getDenseI64ArrayAttr(from.getStaticHaloSizes()),
-        from.getDynamicHaloSizes());
-}
-
-LogicalResult ShardingOp::verify() {
   llvm::SmallSet<MeshAxis, 4> visitedAxes;
 
   auto checkMeshAxis = [&](ArrayRef<MeshAxis> axesArray) -> LogicalResult {
@@ -478,58 +276,24 @@ LogicalResult ShardingOp::verify() {
     return success();
   };
 
-  for (auto subAxes : getSplitAxes().getAxes()) {
+  for (MeshAxesAttr subAxes : splitAxes) {
     ArrayRef<MeshAxis> subAxesArray = subAxes.asArrayRef();
     if (failed(checkMeshAxis(subAxesArray)))
       return failure();
   }
-  if (getPartialAxes().has_value() &&
-      failed(checkMeshAxis(getPartialAxes().value())))
+  if (failed(checkMeshAxis(partialAxes)))
     return failure();
-
-  if (!getStaticHaloSizes().empty() && !getStaticShardedDimsSizes().empty()) {
-    return emitOpError("halo sizes and shard shapes are mutually exclusive");
-  }
-
-  if (!getStaticHaloSizes().empty()) {
-    auto numSplitAxes = getSplitAxes().getAxes().size();
-    for (auto splitAxis : getSplitAxes().getAxes()) {
-      if (splitAxis.empty()) {
-        --numSplitAxes;
-      }
-    }
-    if (getStaticHaloSizes().size() != numSplitAxes * 2) {
-      return emitError() << "halo sizes must be specified for all split axes.";
-    }
-  }
-
   return success();
 }
 
-void ShardingOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "sharding");
+bool MeshShardingAttr::operator==(Attribute rhs) const {
+  MeshShardingAttr rhsAsMeshShardingAttr = rhs.dyn_cast<MeshShardingAttr>();
+  return rhsAsMeshShardingAttr && *this == rhsAsMeshShardingAttr;
 }
 
-LogicalResult ShardingOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = ::getMeshAndVerify(getOperation(), getMeshAttr(), symbolTable);
-  if (failed(mesh)) {
-    return failure();
-  }
-  if (mlir::ShapedType::isDynamicShape(mesh->getShape()) &&
-      getStaticShardedDimsSizes().size() > 0) {
-    return emitError() << "sharded dims sizes are not allowed for "
-                          "devices meshes with dynamic shape.";
-  }
-  return success();
-}
-
-//===----------------------------------------------------------------------===//
-// MeshSharding
-//===----------------------------------------------------------------------===//
-
-bool MeshSharding::equalSplitAndPartialAxes(const MeshSharding &rhs) const {
-  if (getMesh() != rhs.getMesh()) {
+bool MeshShardingAttr::operator==(MeshShardingAttr rhs) const {
+  if (getCluster() != rhs.getCluster() ||
+      getPartialAxes() != rhs.getPartialAxes()) {
     return false;
   }
 
@@ -553,124 +317,13 @@ bool MeshSharding::equalSplitAndPartialAxes(const MeshSharding &rhs) const {
                       std::mem_fn(&MeshAxesAttr::empty));
 }
 
-bool MeshSharding::equalHaloAndShardSizes(const MeshSharding &rhs) const {
-  if (rhs.getStaticHaloSizes().size() != getStaticHaloSizes().size() ||
-      !llvm::equal(llvm::make_range(getStaticHaloSizes().begin(),
-                                    getStaticHaloSizes().end()),
-                   llvm::make_range(rhs.getStaticHaloSizes().begin(),
-                                    rhs.getStaticHaloSizes().end()))) {
-    return false;
-  }
-  if (rhs.getStaticShardedDimsSizes().size() != getDynamicHaloSizes().size() ||
-      !llvm::equal(llvm::make_range(getStaticShardedDimsSizes().begin(),
-                                    getStaticShardedDimsSizes().end()),
-                   llvm::make_range(rhs.getStaticShardedDimsSizes().begin(),
-                                    rhs.getStaticShardedDimsSizes().end()))) {
-    return false;
-  }
-  if (rhs.getDynamicHaloSizes().size() != getStaticShardedDimsSizes().size() ||
-      !llvm::equal(llvm::make_range(getDynamicHaloSizes().begin(),
-                                    getDynamicHaloSizes().end()),
-                   llvm::make_range(rhs.getDynamicHaloSizes().begin(),
-                                    rhs.getDynamicHaloSizes().end()))) {
-    return false;
-  }
-  if (rhs.getDynamicShardedDimsSizes().size() !=
-          getDynamicShardedDimsSizes().size() ||
-      !llvm::equal(llvm::make_range(getDynamicShardedDimsSizes().begin(),
-                                    getDynamicShardedDimsSizes().end()),
-                   llvm::make_range(rhs.getDynamicShardedDimsSizes().begin(),
-                                    rhs.getDynamicShardedDimsSizes().end()))) {
-    return false;
-  }
-  return true;
-}
-
-bool MeshSharding::operator==(Value rhs) const {
-  return equalSplitAndPartialAxes(rhs) && equalHaloAndShardSizes(rhs);
-}
-
-bool MeshSharding::operator!=(Value rhs) const { return !(*this == rhs); }
-
-bool MeshSharding::operator==(const MeshSharding &rhs) const {
-  return equalSplitAndPartialAxes(rhs) && equalHaloAndShardSizes(rhs);
-}
-
-bool MeshSharding::operator!=(const MeshSharding &rhs) const {
-  return !(*this == rhs);
-}
-
-MeshSharding::MeshSharding(Value rhs) {
-  auto shardingOp = mlir::dyn_cast<ShardingOp>(rhs.getDefiningOp());
-  assert(shardingOp && "expected sharding op");
-  *this = get(shardingOp.getMeshAttr(), shardingOp.getSplitAxes().getAxes(),
-              shardingOp.getPartialAxes().value_or(ArrayRef<MeshAxis>()),
-              shardingOp.getPartialType().value_or(ReductionKind::Sum),
-              shardingOp.getStaticHaloSizes(),
-              shardingOp.getStaticShardedDimsSizes(),
-              SmallVector<Value>(shardingOp.getDynamicHaloSizes()),
-              SmallVector<Value>(shardingOp.getDynamicShardedDimsSizes()));
-}
-
-MeshSharding MeshSharding::get(::mlir::FlatSymbolRefAttr mesh_,
-                               ArrayRef<MeshAxesAttr> split_axes_,
-                               ArrayRef<MeshAxis> partial_axes_,
-                               ReductionKind partial_type_,
-                               ArrayRef<int64_t> static_halo_sizes_,
-                               ArrayRef<int64_t> static_sharded_dims_sizes_,
-                               ArrayRef<Value> dynamic_halo_sizes_,
-                               ArrayRef<Value> dynamic_sharded_dims_sizes_) {
-  MeshSharding res;
-  res.mesh = mesh_;
-  res.split_axes.resize(split_axes_.size());
-  for (auto [i, axis] : llvm::enumerate(split_axes_)) {
-    res.split_axes[i] =
-        MeshAxesAttr::get(mesh_.getContext(), axis.asArrayRef());
-  }
-
-  auto clone = [](const auto src, auto &dst) {
-    dst.resize(src.size());
-    llvm::copy(src, dst.begin());
-  };
-
-  clone(partial_axes_, res.partial_axes);
-  res.partial_type = partial_type_;
-  clone(static_halo_sizes_, res.static_halo_sizes);
-  clone(static_sharded_dims_sizes_, res.static_sharded_dims_sizes);
-  clone(dynamic_halo_sizes_, res.dynamic_halo_sizes);
-  clone(dynamic_sharded_dims_sizes_, res.dynamic_sharded_dims_sizes);
-
-  return res;
-}
-
-//===----------------------------------------------------------------------===//
-// mesh.shard_shape
-//===----------------------------------------------------------------------===//
-
-void ShardShapeOp::build(::mlir::OpBuilder &odsBuilder,
-                         ::mlir::OperationState &odsState,
-                         ::llvm::ArrayRef<int64_t> shape,
-                         ::mlir::Value sharding, ::mlir::Value device) {
-  SmallVector<mlir::Type> resType(shape.size(), odsBuilder.getIndexType());
-  build(odsBuilder, odsState, resType, shape, sharding, device);
-}
-
-//===----------------------------------------------------------------------===//
-// mesh.shard op
-//===----------------------------------------------------------------------===//
-
-void ShardOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "sharding_annotated");
-}
-
 //===----------------------------------------------------------------------===//
 // mesh.process_multi_index op
 //===----------------------------------------------------------------------===//
 
 LogicalResult
 ProcessMultiIndexOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = ::getMeshAndVerify(getOperation(), getMeshAttr(), symbolTable);
+  auto mesh = ::getMesh(getOperation(), getMeshAttr(), symbolTable);
   if (failed(mesh)) {
     return failure();
   }
@@ -689,7 +342,7 @@ ProcessMultiIndexOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 void ProcessMultiIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                                MeshOp mesh) {
+                                ClusterOp mesh) {
   build(odsBuilder, odsState,
         SmallVector<Type>(mesh.getRank(), odsBuilder.getIndexType()),
         mesh.getSymName(), ArrayRef<MeshAxis>());
@@ -702,18 +355,13 @@ void ProcessMultiIndexOp::build(OpBuilder &odsBuilder, OperationState &odsState,
         MeshAxesAttr::get(odsBuilder.getContext(), axes));
 }
 
-void ProcessMultiIndexOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResults()[0], "proc_linear_idx");
-}
-
 //===----------------------------------------------------------------------===//
 // mesh.process_linear_index op
 //===----------------------------------------------------------------------===//
 
 LogicalResult
 ProcessLinearIndexOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = ::getMeshAndVerify(getOperation(), getMeshAttr(), symbolTable);
+  auto mesh = ::getMesh(getOperation(), getMeshAttr(), symbolTable);
   if (failed(mesh)) {
     return failure();
   }
@@ -721,13 +369,8 @@ ProcessLinearIndexOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 void ProcessLinearIndexOp::build(OpBuilder &odsBuilder,
-                                 OperationState &odsState, MeshOp mesh) {
+                                 OperationState &odsState, ClusterOp mesh) {
   build(odsBuilder, odsState, mesh.getSymName());
-}
-
-void ProcessLinearIndexOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "proc_linear_idx");
 }
 
 //===----------------------------------------------------------------------===//
@@ -783,6 +426,19 @@ static LogicalResult verifyInGroupDevice(Location loc, StringRef deviceName,
   return success();
 }
 
+template <typename Op>
+static FailureOr<ClusterOp>
+getMeshAndVerifyAxes(Op op, SymbolTableCollection &symbolTable) {
+  auto mesh = ::getMesh(op.getOperation(), op.getMeshAttr(), symbolTable);
+  if (failed(mesh)) {
+    return failure();
+  }
+  if (failed(verifyMeshAxes(op.getLoc(), op.getMeshAxes(), mesh.value()))) {
+    return failure();
+  }
+  return mesh;
+}
+
 template <typename It>
 static auto product(It begin, It end) {
   using ElementType = std::decay_t<decltype(*begin)>;
@@ -793,6 +449,21 @@ static auto product(It begin, It end) {
 template <typename R>
 static auto product(R &&range) {
   return product(adl_begin(range), adl_end(range));
+}
+
+static int64_t collectiveDeviceGroupSize(ArrayRef<MeshAxis> meshAxes,
+                                         ArrayRef<int64_t> meshShape) {
+  int64_t res = 1;
+
+  for (MeshAxis axis : meshAxes) {
+    if (ShapedType::isDynamic(meshShape[axis])) {
+      return ShapedType::kDynamic;
+    }
+    assert(size_t(axis) < meshShape.size());
+    res *= meshShape[axis];
+  }
+
+  return res;
 }
 
 static LogicalResult verifyDimensionCompatibility(Location loc,
@@ -815,17 +486,17 @@ static LogicalResult verifyDimensionCompatibility(Location loc,
 static LogicalResult verifyGatherOperandAndResultShape(
     Value operand, Value result, int64_t gatherAxis,
     ArrayRef<MeshAxis> meshAxes, ArrayRef<int64_t> meshShape) {
-  auto resultRank = cast<ShapedType>(result.getType()).getRank();
+  auto resultRank = result.getType().template cast<ShapedType>().getRank();
   if (gatherAxis < 0 || gatherAxis >= resultRank) {
     return emitError(result.getLoc())
            << "Gather axis " << gatherAxis << " is out of bounds [0, "
            << resultRank << ").";
   }
 
-  ShapedType operandType = cast<ShapedType>(operand.getType());
-  ShapedType resultType = cast<ShapedType>(result.getType());
+  ShapedType operandType = operand.getType().cast<ShapedType>();
+  ShapedType resultType = result.getType().cast<ShapedType>();
   auto deviceGroupSize =
-      DimensionSize(collectiveProcessGroupSize(meshAxes, meshShape));
+      DimensionSize(collectiveDeviceGroupSize(meshAxes, meshShape));
   for (int64_t axis = 0; axis < operandType.getRank(); ++axis) {
     auto operandDimSize = DimensionSize(operandType.getDimSize(axis));
     auto resultDimSize = DimensionSize(resultType.getDimSize(axis));
@@ -842,8 +513,8 @@ static LogicalResult verifyGatherOperandAndResultShape(
 static LogicalResult verifyAllToAllOperandAndResultShape(
     Value operand, Value result, int64_t splitAxis, int64_t concatAxis,
     ArrayRef<MeshAxis> meshAxes, ArrayRef<int64_t> meshShape) {
-  ShapedType operandType = cast<ShapedType>(operand.getType());
-  ShapedType resultType = cast<ShapedType>(result.getType());
+  ShapedType operandType = operand.getType().cast<ShapedType>();
+  ShapedType resultType = result.getType().cast<ShapedType>();
   for (int64_t axis = 0; axis < operandType.getRank(); ++axis) {
     if ((axis != splitAxis && axis != concatAxis) || splitAxis == concatAxis) {
       if (failed(verifyDimensionCompatibility(
@@ -859,7 +530,7 @@ static LogicalResult verifyAllToAllOperandAndResultShape(
   }
 
   auto deviceGroupSize =
-      DimensionSize(collectiveProcessGroupSize(meshAxes, meshShape));
+      DimensionSize(collectiveDeviceGroupSize(meshAxes, meshShape));
   auto operandConcatDimSize = DimensionSize(operandType.getDimSize(concatAxis));
   auto operandSplitDimSize = DimensionSize(operandType.getDimSize(splitAxis));
   DimensionSize expectedResultConcatDimSize =
@@ -884,13 +555,13 @@ static LogicalResult verifyAllToAllOperandAndResultShape(
   return success();
 }
 
-static LogicalResult verifyScatterOrSliceOperandAndResultShape(
-    Value operand, Value result, int64_t tensorAxis,
+static LogicalResult verifyScatterOperandAndResultShape(
+    Value operand, Value result, int64_t scatterAxis,
     ArrayRef<MeshAxis> meshAxes, ArrayRef<int64_t> meshShape) {
-  ShapedType operandType = cast<ShapedType>(operand.getType());
-  ShapedType resultType = cast<ShapedType>(result.getType());
+  ShapedType operandType = operand.getType().cast<ShapedType>();
+  ShapedType resultType = result.getType().cast<ShapedType>();
   for (int64_t axis = 0; axis < operandType.getRank(); ++axis) {
-    if (axis != tensorAxis) {
+    if (axis != scatterAxis) {
       if (failed(verifyDimensionCompatibility(
               result.getLoc(), operandType.getDimSize(axis),
               resultType.getDimSize(axis), axis))) {
@@ -900,42 +571,26 @@ static LogicalResult verifyScatterOrSliceOperandAndResultShape(
   }
 
   auto deviceGroupSize =
-      DimensionSize(collectiveProcessGroupSize(meshAxes, meshShape));
+      DimensionSize(collectiveDeviceGroupSize(meshAxes, meshShape));
   auto operandScatterDimSize =
-      DimensionSize(operandType.getDimSize(tensorAxis));
+      DimensionSize(operandType.getDimSize(scatterAxis));
   if (!operandScatterDimSize.isDynamic() && !deviceGroupSize.isDynamic() &&
       int64_t(operandScatterDimSize) % int64_t(deviceGroupSize) != 0) {
     return emitError(result.getLoc())
            << "Operand dimension size " << int64_t(operandScatterDimSize)
            << " is not divisible by collective device group size "
-           << int64_t(deviceGroupSize) << " for tensor axis " << tensorAxis
+           << int64_t(deviceGroupSize) << " for scatter axis " << scatterAxis
            << ".";
   }
-  DimensionSize expectedResultTensorDimSize =
+  DimensionSize expectedResultScatterDimSize =
       operandScatterDimSize / deviceGroupSize;
   if (failed(verifyDimensionCompatibility(
-          result.getLoc(), expectedResultTensorDimSize.value(),
-          resultType.getDimSize(tensorAxis), tensorAxis))) {
+          result.getLoc(), expectedResultScatterDimSize.value(),
+          resultType.getDimSize(scatterAxis), scatterAxis))) {
     return failure();
   }
 
   return success();
-}
-
-static RankedTensorType sliceResultType(Type operandType, MeshOp mesh,
-                                        ArrayRef<MeshAxis> meshAxes,
-                                        int64_t sliceAxis) {
-  RankedTensorType operandRankedTensorType =
-      cast<RankedTensorType>(operandType);
-  DimensionSize operandSliceAxisSize =
-      operandRankedTensorType.getShape()[sliceAxis];
-  SmallVector<int64_t> resultShape =
-      llvm::to_vector(operandRankedTensorType.getShape());
-
-  resultShape[sliceAxis] =
-      operandSliceAxisSize /
-      DimensionSize(collectiveProcessGroupSize(meshAxes, mesh));
-  return operandRankedTensorType.clone(resultShape);
 }
 
 //===----------------------------------------------------------------------===//
@@ -959,11 +614,6 @@ void AllGatherOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<EmptyMeshAxesCanonicalizationPattern<AllGatherOp>>(context);
 }
 
-void AllGatherOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "all_gather");
-}
-
 //===----------------------------------------------------------------------===//
 // mesh.all_reduce op
 //===----------------------------------------------------------------------===//
@@ -976,57 +626,6 @@ AllReduceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void AllReduceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                               MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<AllReduceOp>>(context);
-}
-
-void AllReduceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                        Value input, StringRef mesh,
-                        ArrayRef<MeshAxis> meshAxes, ReductionKind reduction) {
-  build(odsBuilder, odsState, input.getType(), mesh, meshAxes, input,
-        reduction);
-}
-
-void AllReduceOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "all_reduce");
-}
-
-//===----------------------------------------------------------------------===//
-// mesh.all_slice op
-//===----------------------------------------------------------------------===//
-
-LogicalResult AllSliceOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = getMeshAndVerifyAxes(*this, symbolTable);
-  if (failed(mesh)) {
-    return failure();
-  }
-  return verifyScatterOrSliceOperandAndResultShape(
-      getOperand(), getResult(), getSliceAxis().getSExtValue(), getMeshAxes(),
-      mesh.value().getShape());
-}
-
-void AllSliceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
-                                             MLIRContext *context) {
-  patterns.add<EmptyMeshAxesCanonicalizationPattern<AllSliceOp>>(context);
-}
-
-void AllSliceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                       Value input, MeshOp mesh, ArrayRef<MeshAxis> meshAxes,
-                       int64_t sliceAxis) {
-  Type resultType = sliceResultType(input.getType(), mesh, meshAxes, sliceAxis);
-  build(odsBuilder, odsState, resultType, input, mesh.getSymName(), meshAxes,
-        sliceAxis);
-}
-
-void AllSliceOp::build(OpBuilder &odsBuilder, OperationState &odsState,
-                       Type resultType, Value input, StringRef mesh,
-                       ArrayRef<MeshAxis> meshAxes, int64_t sliceAxis) {
-  build(odsBuilder, odsState, resultType, mesh, meshAxes, input,
-        APInt(sizeof(sliceAxis) * CHAR_BIT, sliceAxis));
-}
-
-void AllSliceOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "all_slice");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1047,11 +646,6 @@ LogicalResult AllToAllOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void AllToAllOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                              MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<AllToAllOp>>(context);
-}
-
-void AllToAllOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "all_to_all");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1076,11 +670,6 @@ BroadcastOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void BroadcastOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                               MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<BroadcastOp>>(context);
-}
-
-void BroadcastOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "broadcast");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1109,11 +698,6 @@ void GatherOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<EmptyMeshAxesCanonicalizationPattern<GatherOp>>(context);
 }
 
-void GatherOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "gather");
-}
-
 //===----------------------------------------------------------------------===//
 // mesh.recv op
 //===----------------------------------------------------------------------===//
@@ -1135,10 +719,6 @@ LogicalResult RecvOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void RecvOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                          MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<RecvOp>>(context);
-}
-
-void RecvOp::getAsmResultNames(function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "recv");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1164,11 +744,6 @@ void ReduceOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   patterns.add<EmptyMeshAxesCanonicalizationPattern<ReduceOp>>(context);
 }
 
-void ReduceOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "reduce");
-}
-
 //===----------------------------------------------------------------------===//
 // mesh.reduce_scatter op
 //===----------------------------------------------------------------------===//
@@ -1180,7 +755,7 @@ ReduceScatterOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return failure();
   }
 
-  return verifyScatterOrSliceOperandAndResultShape(
+  return verifyScatterOperandAndResultShape(
       getOperand(), getResult(), getScatterAxis().getSExtValue(), getMeshAxes(),
       mesh.value().getShape());
 }
@@ -1188,11 +763,6 @@ ReduceScatterOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void ReduceScatterOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                                   MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<ReduceScatterOp>>(context);
-}
-
-void ReduceScatterOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "reduce_scatter");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1211,19 +781,14 @@ LogicalResult ScatterOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   }
 
   auto scatterAxis = getScatterAxis().getSExtValue();
-  return verifyScatterOrSliceOperandAndResultShape(getInput(), getResult(),
-                                                   scatterAxis, getMeshAxes(),
-                                                   mesh.value().getShape());
+  return verifyScatterOperandAndResultShape(getInput(), getResult(),
+                                            scatterAxis, getMeshAxes(),
+                                            mesh.value().getShape());
 }
 
 void ScatterOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                             MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<ScatterOp>>(context);
-}
-
-void ScatterOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "scatter");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1246,10 +811,6 @@ LogicalResult SendOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 void SendOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
                                          MLIRContext *context) {
   patterns.add<EmptyMeshAxesCanonicalizationPattern<SendOp>>(context);
-}
-
-void SendOp::getAsmResultNames(function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "send");
 }
 
 //===----------------------------------------------------------------------===//
@@ -1278,25 +839,6 @@ void ShiftOp::getCanonicalizationPatterns(RewritePatternSet &patterns,
   // offset % shift_axis_mesh_dim_size == 0.
 }
 
-void ShiftOp::getAsmResultNames(
-    function_ref<void(Value, StringRef)> setNameFn) {
-  setNameFn(getResult(), "shift");
-}
-
-//===----------------------------------------------------------------------===//
-// mesh.update_halo op
-//===----------------------------------------------------------------------===//
-
-LogicalResult
-UpdateHaloOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
-  auto mesh = getMeshAndVerify(getOperation(), getMeshAttr(), symbolTable);
-  if (failed(mesh)) {
-    return failure();
-  }
-
-  return success();
-}
-
 //===----------------------------------------------------------------------===//
 // TableGen'd op method definitions
 //===----------------------------------------------------------------------===//
@@ -1305,9 +847,6 @@ UpdateHaloOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 #include "mlir/Dialect/Mesh/IR/MeshOps.cpp.inc"
 
 #define GET_ATTRDEF_CLASSES
-#include "mlir/Dialect/Mesh/IR/MeshAttributes.cpp.inc"
+#include "mlir/Dialect/Mesh/IR/MeshOpsAttributes.cpp.inc"
 
-#define GET_TYPEDEF_CLASSES
-#include "mlir/Dialect/Mesh/IR/MeshTypes.cpp.inc"
-
-#include "mlir/Dialect/Mesh/IR/MeshEnums.cpp.inc"
+#include "mlir/Dialect/Mesh/IR/MeshOpsEnums.cpp.inc"

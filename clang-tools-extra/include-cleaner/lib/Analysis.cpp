@@ -82,7 +82,7 @@ analyze(llvm::ArrayRef<Decl *> ASTRoots,
         const PragmaIncludes *PI, const Preprocessor &PP,
         llvm::function_ref<bool(llvm::StringRef)> HeaderFilter) {
   auto &SM = PP.getSourceManager();
-  const auto MainFile = *SM.getFileEntryRefForID(SM.getMainFileID());
+  const FileEntry *MainFile = SM.getFileEntryForID(SM.getMainFileID());
   llvm::DenseSet<const Include *> Used;
   llvm::StringSet<> Missing;
   if (!HeaderFilter)
@@ -95,7 +95,7 @@ analyze(llvm::ArrayRef<Decl *> ASTRoots,
              for (const Header &H : Providers) {
                if (H.kind() == Header::Physical &&
                    (H.physical() == MainFile ||
-                    H.physical().getDir() == ResourceDir)) {
+                    (ResourceDir && H.physical().getDir() == *ResourceDir))) {
                  Satisfied = true;
                }
                for (const Include *I : Inc.match(H)) {
@@ -103,30 +103,18 @@ analyze(llvm::ArrayRef<Decl *> ASTRoots,
                  Satisfied = true;
                }
              }
-             // Bail out if we can't (or need not) insert an include.
-             if (Satisfied || Providers.empty() || Ref.RT != RefType::Explicit)
-               return;
-             if (HeaderFilter(Providers.front().resolvedPath()))
-               return;
-             // Check if we have any headers with the same spelling, in edge
-             // cases like `#include_next "foo.h"`, the user can't ever
-             // include the physical foo.h, but can have a spelling that
-             // refers to it.
-             auto Spelling = spellHeader(
-                 {Providers.front(), PP.getHeaderSearchInfo(), MainFile});
-             for (const Include *I : Inc.match(Header{Spelling})) {
-               Used.insert(I);
-               Satisfied = true;
-             }
-             if (!Satisfied)
-               Missing.insert(std::move(Spelling));
+             if (!Satisfied && !Providers.empty() &&
+                 Ref.RT == RefType::Explicit &&
+                 !HeaderFilter(Providers.front().resolvedPath()))
+               Missing.insert(spellHeader(
+                   {Providers.front(), PP.getHeaderSearchInfo(), MainFile}));
            });
 
   AnalysisResults Results;
   for (const Include &I : Inc.all()) {
     if (Used.contains(&I) || !I.Resolved ||
-        HeaderFilter(I.Resolved->getName()) ||
-        I.Resolved->getDir() == ResourceDir)
+        HeaderFilter(I.Resolved->getFileEntry().tryGetRealPathName()) ||
+        (ResourceDir && I.Resolved->getFileEntry().getDir() == *ResourceDir))
       continue;
     if (PI) {
       if (PI->shouldKeep(*I.Resolved))
@@ -138,7 +126,7 @@ analyze(llvm::ArrayRef<Decl *> ASTRoots,
         // Since most private -> public mappings happen in a verbatim way, we
         // check textually here. This might go wrong in presence of symlinks or
         // header mappings. But that's not different than rest of the places.
-        if (MainFile.getName().ends_with(PHeader))
+        if (MainFile->tryGetRealPathName().ends_with(PHeader))
           continue;
       }
     }

@@ -23,7 +23,6 @@
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/Function.h"
 #include "lldb/Symbol/SymbolContext.h"
-#include "lldb/Target/Language.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
@@ -74,8 +73,7 @@ BreakpointResolverSP BreakpointResolver::CreateFromStructuredData(
     const StructuredData::Dictionary &resolver_dict, Status &error) {
   BreakpointResolverSP result_sp;
   if (!resolver_dict.IsValid()) {
-    error = Status::FromErrorString(
-        "Can't deserialize from an invalid data object.");
+    error.SetErrorString("Can't deserialize from an invalid data object.");
     return result_sp;
   }
 
@@ -85,15 +83,14 @@ BreakpointResolverSP BreakpointResolver::CreateFromStructuredData(
       GetSerializationSubclassKey(), subclass_name);
 
   if (!success) {
-    error =
-        Status::FromErrorString("Resolver data missing subclass resolver key");
+    error.SetErrorString("Resolver data missing subclass resolver key");
     return result_sp;
   }
 
   ResolverTy resolver_type = NameToResolverTy(subclass_name);
   if (resolver_type == UnknownResolver) {
-    error = Status::FromErrorStringWithFormatv("Unknown resolver type: {0}.",
-                                               subclass_name);
+    error.SetErrorStringWithFormatv("Unknown resolver type: {0}.",
+                                    subclass_name);
     return result_sp;
   }
 
@@ -101,8 +98,7 @@ BreakpointResolverSP BreakpointResolver::CreateFromStructuredData(
   success = resolver_dict.GetValueForKeyAsDictionary(
       GetSerializationSubclassOptionsKey(), subclass_options);
   if (!success || !subclass_options || !subclass_options->IsValid()) {
-    error =
-        Status::FromErrorString("Resolver data missing subclass options key.");
+    error.SetErrorString("Resolver data missing subclass options key.");
     return result_sp;
   }
 
@@ -110,8 +106,7 @@ BreakpointResolverSP BreakpointResolver::CreateFromStructuredData(
   success = subclass_options->GetValueForKeyAsInteger(
       GetKey(OptionNames::Offset), offset);
   if (!success) {
-    error =
-        Status::FromErrorString("Resolver data missing offset options key.");
+    error.SetErrorString("Resolver data missing offset options key.");
     return result_sp;
   }
 
@@ -137,7 +132,7 @@ BreakpointResolverSP BreakpointResolver::CreateFromStructuredData(
         *subclass_options, error);
     break;
   case ExceptionResolver:
-    error = Status::FromErrorString("Exception resolvers are hard.");
+    error.SetErrorString("Exception resolvers are hard.");
     break;
   default:
     llvm_unreachable("Should never get an unresolvable resolver type.");
@@ -208,15 +203,8 @@ void BreakpointResolver::SetSCMatchesByLine(
     SearchFilter &filter, SymbolContextList &sc_list, bool skip_prologue,
     llvm::StringRef log_ident, uint32_t line, std::optional<uint16_t> column) {
   llvm::SmallVector<SymbolContext, 16> all_scs;
-
-  for (const auto &sc : sc_list) {
-    if (Language::GetGlobalLanguageProperties()
-            .GetEnableFilterForLineBreakpoints())
-      if (Language *lang = Language::FindPlugin(sc.GetLanguage());
-          lang && lang->IgnoreForLineBreakpoints(sc))
-        continue;
-    all_scs.push_back(sc);
-  }
+  for (uint32_t i = 0; i < sc_list.GetSize(); ++i)
+    all_scs.push_back(sc_list[i]);
 
   while (all_scs.size()) {
     uint32_t closest_line = UINT32_MAX;
@@ -225,10 +213,9 @@ void BreakpointResolver::SetSCMatchesByLine(
     auto &match = all_scs[0];
     auto worklist_begin = std::partition(
         all_scs.begin(), all_scs.end(), [&](const SymbolContext &sc) {
-          if (sc.line_entry.GetFile() == match.line_entry.GetFile() ||
-              sc.line_entry.original_file_sp->Equal(
-                  *match.line_entry.original_file_sp,
-                  SupportFile::eEqualFileSpecAndChecksumIfSet)) {
+          if (sc.line_entry.file == match.line_entry.file ||
+              *sc.line_entry.original_file_sp ==
+                  *match.line_entry.original_file_sp) {
             // When a match is found, keep track of the smallest line number.
             closest_line = std::min(closest_line, sc.line_entry.line);
             return false;

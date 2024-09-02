@@ -31,8 +31,8 @@ using llvm::support::ulittle32_t;
 
 namespace lld::coff {
 
-SectionChunk::SectionChunk(ObjFile *f, const coff_section *h, Kind k)
-    : Chunk(k), file(f), header(h), repl(this) {
+SectionChunk::SectionChunk(ObjFile *f, const coff_section *h)
+    : Chunk(SectionKind), file(f), header(h), repl(this) {
   // Initialize relocs.
   if (file)
     setRelocs(file->getCOFFObj()->getRelocations(header));
@@ -410,12 +410,6 @@ void SectionChunk::writeTo(uint8_t *buf) const {
 
     applyRelocation(buf + rel.VirtualAddress, rel);
   }
-
-  // Write the offset to EC entry thunk preceding section contents. The low bit
-  // is always set, so it's effectively an offset from the last byte of the
-  // offset.
-  if (Defined *entryThunk = getEntryThunk())
-    write32le(buf - sizeof(uint32_t), entryThunk->getRVA() - rva + 1);
 }
 
 void SectionChunk::applyRelocation(uint8_t *off,
@@ -443,17 +437,19 @@ void SectionChunk::applyRelocation(uint8_t *off,
   // Compute the RVA of the relocation for relative relocations.
   uint64_t p = rva + rel.VirtualAddress;
   uint64_t imageBase = file->ctx.config.imageBase;
-  switch (getArch()) {
-  case Triple::x86_64:
+  switch (getMachine()) {
+  case AMD64:
     applyRelX64(off, rel.Type, os, s, p, imageBase);
     break;
-  case Triple::x86:
+  case I386:
     applyRelX86(off, rel.Type, os, s, p, imageBase);
     break;
-  case Triple::thumb:
+  case ARMNT:
     applyRelARM(off, rel.Type, os, s, p, imageBase);
     break;
-  case Triple::aarch64:
+  case ARM64:
+  case ARM64EC:
+  case ARM64X:
     applyRelARM64(off, rel.Type, os, s, p, imageBase);
     break;
   default:
@@ -520,25 +516,27 @@ void SectionChunk::addAssociative(SectionChunk *child) {
 }
 
 static uint8_t getBaserelType(const coff_relocation &rel,
-                              Triple::ArchType arch) {
-  switch (arch) {
-  case Triple::x86_64:
+                              llvm::COFF::MachineTypes machine) {
+  switch (machine) {
+  case AMD64:
     if (rel.Type == IMAGE_REL_AMD64_ADDR64)
       return IMAGE_REL_BASED_DIR64;
     if (rel.Type == IMAGE_REL_AMD64_ADDR32)
       return IMAGE_REL_BASED_HIGHLOW;
     return IMAGE_REL_BASED_ABSOLUTE;
-  case Triple::x86:
+  case I386:
     if (rel.Type == IMAGE_REL_I386_DIR32)
       return IMAGE_REL_BASED_HIGHLOW;
     return IMAGE_REL_BASED_ABSOLUTE;
-  case Triple::thumb:
+  case ARMNT:
     if (rel.Type == IMAGE_REL_ARM_ADDR32)
       return IMAGE_REL_BASED_HIGHLOW;
     if (rel.Type == IMAGE_REL_ARM_MOV32T)
       return IMAGE_REL_BASED_ARM_MOV32T;
     return IMAGE_REL_BASED_ABSOLUTE;
-  case Triple::aarch64:
+  case ARM64:
+  case ARM64EC:
+  case ARM64X:
     if (rel.Type == IMAGE_REL_ARM64_ADDR64)
       return IMAGE_REL_BASED_DIR64;
     return IMAGE_REL_BASED_ABSOLUTE;
@@ -553,7 +551,7 @@ static uint8_t getBaserelType(const coff_relocation &rel,
 // Only called when base relocation is enabled.
 void SectionChunk::getBaserels(std::vector<Baserel> *res) {
   for (const coff_relocation &rel : getRelocs()) {
-    uint8_t ty = getBaserelType(rel, getArch());
+    uint8_t ty = getBaserelType(rel, getMachine());
     if (ty == IMAGE_REL_BASED_ABSOLUTE)
       continue;
     Symbol *target = file->getSymbol(rel.SymbolTableIndex);
@@ -842,9 +840,14 @@ const uint8_t arm64Thunk[] = {
     0x00, 0x02, 0x1f, 0xd6, // br   x16
 };
 
-size_t RangeExtensionThunkARM64::getSize() const { return sizeof(arm64Thunk); }
+size_t RangeExtensionThunkARM64::getSize() const {
+  assert(ctx.config.machine == ARM64);
+  (void)&ctx;
+  return sizeof(arm64Thunk);
+}
 
 void RangeExtensionThunkARM64::writeTo(uint8_t *buf) const {
+  assert(ctx.config.machine == ARM64);
   memcpy(buf, arm64Thunk, sizeof(arm64Thunk));
   applyArm64Addr(buf + 0, target->getRVA(), rva, 12);
   applyArm64Imm(buf + 4, target->getRVA() & 0xfff, 0);
@@ -1065,40 +1068,6 @@ void AbsolutePointerChunk::writeTo(uint8_t *buf) const {
     write64le(buf, value);
   } else {
     write32le(buf, value);
-  }
-}
-
-void ECExportThunkChunk::writeTo(uint8_t *buf) const {
-  memcpy(buf, ECExportThunkCode, sizeof(ECExportThunkCode));
-  write32le(buf + 10, target->getRVA() - rva - 14);
-}
-
-size_t CHPECodeRangesChunk::getSize() const {
-  return exportThunks.size() * sizeof(chpe_code_range_entry);
-}
-
-void CHPECodeRangesChunk::writeTo(uint8_t *buf) const {
-  auto ranges = reinterpret_cast<chpe_code_range_entry *>(buf);
-
-  for (uint32_t i = 0; i < exportThunks.size(); i++) {
-    Chunk *thunk = exportThunks[i].first;
-    uint32_t start = thunk->getRVA();
-    ranges[i].StartRva = start;
-    ranges[i].EndRva = start + thunk->getSize();
-    ranges[i].EntryPoint = start;
-  }
-}
-
-size_t CHPERedirectionChunk::getSize() const {
-  return exportThunks.size() * sizeof(chpe_redirection_entry);
-}
-
-void CHPERedirectionChunk::writeTo(uint8_t *buf) const {
-  auto entries = reinterpret_cast<chpe_redirection_entry *>(buf);
-
-  for (uint32_t i = 0; i < exportThunks.size(); i++) {
-    entries[i].Source = exportThunks[i].first->getRVA();
-    entries[i].Destination = exportThunks[i].second->getRVA();
   }
 }
 

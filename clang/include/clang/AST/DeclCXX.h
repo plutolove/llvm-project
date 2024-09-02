@@ -120,7 +120,7 @@ public:
     return new (C, DC) AccessSpecDecl(AS, DC, ASLoc, ColonLoc);
   }
 
-  static AccessSpecDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static AccessSpecDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -256,7 +256,6 @@ public:
 
 /// Represents a C++ struct/union/class.
 class CXXRecordDecl : public RecordDecl {
-  friend class ASTDeclMerger;
   friend class ASTDeclReader;
   friend class ASTDeclWriter;
   friend class ASTNodeImporter;
@@ -580,8 +579,7 @@ public:
                                      TypeSourceInfo *Info, SourceLocation Loc,
                                      unsigned DependencyKind, bool IsGeneric,
                                      LambdaCaptureDefault CaptureDefault);
-  static CXXRecordDecl *CreateDeserialized(const ASTContext &C,
-                                           GlobalDeclID ID);
+  static CXXRecordDecl *CreateDeserialized(const ASTContext &C, unsigned ID);
 
   bool isDynamicClass() const {
     return data().Polymorphic || data().NumVBases != 0;
@@ -1189,6 +1187,10 @@ public:
   ///
   /// \note This does NOT include a check for union-ness.
   bool isEmpty() const { return data().Empty; }
+  /// Marks this record as empty. This is used by DWARFASTParserClang
+  /// when parsing records with empty fields having [[no_unique_address]]
+  /// attribute
+  void markEmpty() { data().Empty = true; }
 
   void setInitMethod(bool Val) { data().HasInitMethod = Val; }
   bool hasInitMethod() const { return data().HasInitMethod; }
@@ -1206,13 +1208,6 @@ public:
     auto &D = data();
     return D.HasPublicFields || D.HasProtectedFields || D.HasPrivateFields;
   }
-
-  /// If this is a standard-layout class or union, any and all data members will
-  /// be declared in the same type.
-  ///
-  /// This retrieves the type where any fields are declared,
-  /// or the current class if there is no class with fields.
-  const CXXRecordDecl *getStandardLayoutBaseWithFields() const;
 
   /// Whether this class is polymorphic (C++ [class.virtual]),
   /// which means that the class contains or inherits a virtual function.
@@ -1874,10 +1869,6 @@ public:
     DL.MethodTyInfo = TS;
   }
 
-  void setLambdaDependencyKind(unsigned Kind) {
-    getLambdaData().DependencyKind = Kind;
-  }
-
   void setLambdaIsGeneric(bool IsGeneric) {
     assert(DefinitionData && DefinitionData->IsLambda &&
            "setting lambda property of non-lambda class");
@@ -1985,8 +1976,7 @@ public:
          CXXConstructorDecl *Ctor = nullptr,
          DeductionCandidate Kind = DeductionCandidate::Normal);
 
-  static CXXDeductionGuideDecl *CreateDeserialized(ASTContext &C,
-                                                   GlobalDeclID ID);
+  static CXXDeductionGuideDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   ExplicitSpecifier getExplicitSpecifier() { return ExplicitSpec; }
   const ExplicitSpecifier getExplicitSpecifier() const { return ExplicitSpec; }
@@ -2041,8 +2031,7 @@ public:
   static RequiresExprBodyDecl *Create(ASTContext &C, DeclContext *DC,
                                       SourceLocation StartLoc);
 
-  static RequiresExprBodyDecl *CreateDeserialized(ASTContext &C,
-                                                  GlobalDeclID ID);
+  static RequiresExprBodyDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -2085,7 +2074,7 @@ public:
          ConstexprSpecKind ConstexprKind, SourceLocation EndLocation,
          Expr *TrailingRequiresClause = nullptr);
 
-  static CXXMethodDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static CXXMethodDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   bool isStatic() const;
   bool isInstance() const { return !isStatic(); }
@@ -2586,7 +2575,7 @@ public:
   friend class ASTDeclWriter;
   friend TrailingObjects;
 
-  static CXXConstructorDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID,
+  static CXXConstructorDecl *CreateDeserialized(ASTContext &C, unsigned ID,
                                                 uint64_t AllocKind);
   static CXXConstructorDecl *
   Create(ASTContext &C, CXXRecordDecl *RD, SourceLocation StartLoc,
@@ -2829,7 +2818,7 @@ public:
          bool UsesFPIntrin, bool isInline, bool isImplicitlyDeclared,
          ConstexprSpecKind ConstexprKind,
          Expr *TrailingRequiresClause = nullptr);
-  static CXXDestructorDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static CXXDestructorDecl *CreateDeserialized(ASTContext & C, unsigned ID);
 
   void setOperatorDelete(FunctionDecl *OD, Expr *ThisArg);
 
@@ -2888,7 +2877,7 @@ public:
          bool UsesFPIntrin, bool isInline, ExplicitSpecifier ES,
          ConstexprSpecKind ConstexprKind, SourceLocation EndLocation,
          Expr *TrailingRequiresClause = nullptr);
-  static CXXConversionDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static CXXConversionDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   ExplicitSpecifier getExplicitSpecifier() {
     return getCanonicalDecl()->ExplicitSpec;
@@ -2955,7 +2944,7 @@ public:
                                  SourceLocation ExternLoc,
                                  SourceLocation LangLoc,
                                  LinkageSpecLanguageIDs Lang, bool HasBraces);
-  static LinkageSpecDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static LinkageSpecDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   /// Return the language specified by this linkage specification.
   LinkageSpecLanguageIDs getLanguage() const {
@@ -3103,7 +3092,7 @@ public:
                                     SourceLocation IdentLoc,
                                     NamedDecl *Nominated,
                                     DeclContext *CommonAncestor);
-  static UsingDirectiveDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static UsingDirectiveDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   SourceRange getSourceRange() const override LLVM_READONLY {
     return SourceRange(UsingLoc, getLocation());
@@ -3164,7 +3153,7 @@ public:
                                     SourceLocation IdentLoc,
                                     NamedDecl *Namespace);
 
-  static NamespaceAliasDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static NamespaceAliasDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   using redecl_range = redeclarable_base::redecl_range;
   using redecl_iterator = redeclarable_base::redecl_iterator;
@@ -3261,7 +3250,7 @@ public:
         LifetimeExtendedTemporaryDecl(Temp, EDec, Mangling);
   }
   static LifetimeExtendedTemporaryDecl *CreateDeserialized(ASTContext &C,
-                                                           GlobalDeclID ID) {
+                                                           unsigned ID) {
     return new (C, ID) LifetimeExtendedTemporaryDecl(EmptyShell{});
   }
 
@@ -3364,7 +3353,7 @@ public:
         UsingShadowDecl(UsingShadow, C, DC, Loc, Name, Introducer, Target);
   }
 
-  static UsingShadowDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static UsingShadowDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   using redecl_range = redeclarable_base::redecl_range;
   using redecl_iterator = redeclarable_base::redecl_iterator;
@@ -3573,7 +3562,7 @@ public:
                            const DeclarationNameInfo &NameInfo,
                            bool HasTypenameKeyword);
 
-  static UsingDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static UsingDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   SourceRange getSourceRange() const override LLVM_READONLY;
 
@@ -3652,7 +3641,7 @@ public:
                                             UsingDecl *Using, NamedDecl *Target,
                                             bool IsVirtual);
   static ConstructorUsingShadowDecl *CreateDeserialized(ASTContext &C,
-                                                        GlobalDeclID ID);
+                                                        unsigned ID);
 
   /// Override the UsingShadowDecl's getIntroducer, returning the UsingDecl that
   /// introduced this.
@@ -3764,7 +3753,7 @@ public:
                                SourceLocation UsingL, SourceLocation EnumL,
                                SourceLocation NameL, TypeSourceInfo *EnumType);
 
-  static UsingEnumDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static UsingEnumDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   SourceRange getSourceRange() const override LLVM_READONLY;
 
@@ -3837,7 +3826,7 @@ public:
                                NamedDecl *InstantiatedFrom,
                                ArrayRef<NamedDecl *> UsingDecls);
 
-  static UsingPackDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID,
+  static UsingPackDecl *CreateDeserialized(ASTContext &C, unsigned ID,
                                            unsigned NumExpansions);
 
   SourceRange getSourceRange() const override LLVM_READONLY {
@@ -3930,8 +3919,8 @@ public:
            NestedNameSpecifierLoc QualifierLoc,
            const DeclarationNameInfo &NameInfo, SourceLocation EllipsisLoc);
 
-  static UnresolvedUsingValueDecl *CreateDeserialized(ASTContext &C,
-                                                      GlobalDeclID ID);
+  static UnresolvedUsingValueDecl *
+  CreateDeserialized(ASTContext &C, unsigned ID);
 
   SourceRange getSourceRange() const override LLVM_READONLY;
 
@@ -4021,8 +4010,8 @@ public:
            SourceLocation TargetNameLoc, DeclarationName TargetName,
            SourceLocation EllipsisLoc);
 
-  static UnresolvedUsingTypenameDecl *CreateDeserialized(ASTContext &C,
-                                                         GlobalDeclID ID);
+  static UnresolvedUsingTypenameDecl *
+  CreateDeserialized(ASTContext &C, unsigned ID);
 
   /// Retrieves the canonical declaration of this declaration.
   UnresolvedUsingTypenameDecl *getCanonicalDecl() override {
@@ -4052,7 +4041,7 @@ public:
                                              SourceLocation Loc,
                                              DeclarationName Name);
   static UnresolvedUsingIfExistsDecl *CreateDeserialized(ASTContext &Ctx,
-                                                         GlobalDeclID ID);
+                                                         unsigned ID);
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) { return K == Decl::UnresolvedUsingIfExists; }
@@ -4080,7 +4069,7 @@ public:
                                   SourceLocation StaticAssertLoc,
                                   Expr *AssertExpr, Expr *Message,
                                   SourceLocation RParenLoc, bool Failed);
-  static StaticAssertDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static StaticAssertDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   Expr *getAssertExpr() { return AssertExprAndFailed.getPointer(); }
   const Expr *getAssertExpr() const { return AssertExprAndFailed.getPointer(); }
@@ -4127,7 +4116,7 @@ public:
 
   static BindingDecl *Create(ASTContext &C, DeclContext *DC,
                              SourceLocation IdLoc, IdentifierInfo *Id);
-  static BindingDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static BindingDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   /// Get the expression to which this declaration is bound. This may be null
   /// in two different cases: while parsing the initializer for the
@@ -4196,7 +4185,7 @@ public:
                                    QualType T, TypeSourceInfo *TInfo,
                                    StorageClass S,
                                    ArrayRef<BindingDecl *> Bindings);
-  static DecompositionDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID,
+  static DecompositionDecl *CreateDeserialized(ASTContext &C, unsigned ID,
                                                unsigned NumBindings);
 
   ArrayRef<BindingDecl *> bindings() const {
@@ -4253,7 +4242,7 @@ public:
                                 SourceLocation L, DeclarationName N, QualType T,
                                 TypeSourceInfo *TInfo, SourceLocation StartL,
                                 IdentifierInfo *Getter, IdentifierInfo *Setter);
-  static MSPropertyDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static MSPropertyDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   static bool classof(const Decl *D) { return D->getKind() == MSProperty; }
 
@@ -4307,7 +4296,7 @@ private:
   MSGuidDecl(DeclContext *DC, QualType T, Parts P);
 
   static MSGuidDecl *Create(const ASTContext &C, QualType T, Parts P);
-  static MSGuidDecl *CreateDeserialized(ASTContext &C, GlobalDeclID ID);
+  static MSGuidDecl *CreateDeserialized(ASTContext &C, unsigned ID);
 
   // Only ASTContext::getMSGuidDecl and deserialization create these.
   friend class ASTContext;
@@ -4360,7 +4349,7 @@ class UnnamedGlobalConstantDecl : public ValueDecl,
   static UnnamedGlobalConstantDecl *Create(const ASTContext &C, QualType T,
                                            const APValue &APVal);
   static UnnamedGlobalConstantDecl *CreateDeserialized(ASTContext &C,
-                                                       GlobalDeclID ID);
+                                                       unsigned ID);
 
   // Only ASTContext::getUnnamedGlobalConstantDecl and deserialization create
   // these.

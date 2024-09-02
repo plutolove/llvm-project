@@ -42,8 +42,7 @@ AVRInstrInfo::AVRInstrInfo(AVRSubtarget &STI)
 void AVRInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                MachineBasicBlock::iterator MI,
                                const DebugLoc &DL, MCRegister DestReg,
-                               MCRegister SrcReg, bool KillSrc,
-                               bool RenamableDest, bool RenamableSrc) const {
+                               MCRegister SrcReg, bool KillSrc) const {
   const AVRRegisterInfo &TRI = *STI.getRegisterInfo();
   unsigned Opc;
 
@@ -92,7 +91,7 @@ void AVRInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
   }
 }
 
-Register AVRInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+unsigned AVRInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
                                            int &FrameIndex) const {
   switch (MI.getOpcode()) {
   case AVR::LDDRdPtrQ:
@@ -111,7 +110,7 @@ Register AVRInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
   return 0;
 }
 
-Register AVRInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+unsigned AVRInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
                                           int &FrameIndex) const {
   switch (MI.getOpcode()) {
   case AVR::STDPtrQRr:

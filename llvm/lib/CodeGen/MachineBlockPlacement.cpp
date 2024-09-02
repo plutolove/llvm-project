@@ -213,12 +213,6 @@ static cl::opt<bool> RenumberBlocksBeforeView(
         "into a dot graph. Only used when a function is being printed."),
     cl::init(false), cl::Hidden);
 
-static cl::opt<unsigned> ExtTspBlockPlacementMaxBlocks(
-    "ext-tsp-block-placement-max-blocks",
-    cl::desc("Maximum number of basic blocks in a function to run ext-TSP "
-             "block placement."),
-    cl::init(UINT_MAX), cl::Hidden);
-
 namespace llvm {
 extern cl::opt<bool> EnableExtTspBlockPlacement;
 extern cl::opt<bool> ApplyExtTspWithoutProfile;
@@ -486,16 +480,14 @@ class MachineBlockPlacement : public MachineFunctionPass {
                                BlockFilterSet *BlockFilter);
   bool repeatedlyTailDuplicateBlock(
       MachineBasicBlock *BB, MachineBasicBlock *&LPred,
-      const MachineBasicBlock *LoopHeaderBB, BlockChain &Chain,
-      BlockFilterSet *BlockFilter,
+      const MachineBasicBlock *LoopHeaderBB,
+      BlockChain &Chain, BlockFilterSet *BlockFilter,
+      MachineFunction::iterator &PrevUnplacedBlockIt);
+  bool maybeTailDuplicateBlock(
+      MachineBasicBlock *BB, MachineBasicBlock *LPred,
+      BlockChain &Chain, BlockFilterSet *BlockFilter,
       MachineFunction::iterator &PrevUnplacedBlockIt,
-      BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt);
-  bool
-  maybeTailDuplicateBlock(MachineBasicBlock *BB, MachineBasicBlock *LPred,
-                          BlockChain &Chain, BlockFilterSet *BlockFilter,
-                          MachineFunction::iterator &PrevUnplacedBlockIt,
-                          BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt,
-                          bool &DuplicatedToLPred);
+      bool &DuplicatedToLPred);
   bool hasBetterLayoutPredecessor(
       const MachineBasicBlock *BB, const MachineBasicBlock *Succ,
       const BlockChain &SuccChain, BranchProbability SuccProb,
@@ -506,13 +498,10 @@ class MachineBlockPlacement : public MachineFunctionPass {
       const BlockFilterSet *BlockFilter);
   MachineBasicBlock *selectBestCandidateBlock(
       const BlockChain &Chain, SmallVectorImpl<MachineBasicBlock *> &WorkList);
-  MachineBasicBlock *
-  getFirstUnplacedBlock(const BlockChain &PlacedChain,
-                        MachineFunction::iterator &PrevUnplacedBlockIt);
-  MachineBasicBlock *
-  getFirstUnplacedBlock(const BlockChain &PlacedChain,
-                        BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt,
-                        const BlockFilterSet *BlockFilter);
+  MachineBasicBlock *getFirstUnplacedBlock(
+      const BlockChain &PlacedChain,
+      MachineFunction::iterator &PrevUnplacedBlockIt,
+      const BlockFilterSet *BlockFilter);
 
   /// Add a basic block to the work list if it is appropriate.
   ///
@@ -614,11 +603,11 @@ public:
   }
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<MachineBranchProbabilityInfoWrapperPass>();
-    AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
+    AU.addRequired<MachineBranchProbabilityInfo>();
+    AU.addRequired<MachineBlockFrequencyInfo>();
     if (TailDupPlacement)
-      AU.addRequired<MachinePostDominatorTreeWrapperPass>();
-    AU.addRequired<MachineLoopInfoWrapperPass>();
+      AU.addRequired<MachinePostDominatorTree>();
+    AU.addRequired<MachineLoopInfo>();
     AU.addRequired<ProfileSummaryInfoWrapperPass>();
     AU.addRequired<TargetPassConfig>();
     MachineFunctionPass::getAnalysisUsage(AU);
@@ -633,10 +622,10 @@ char &llvm::MachineBlockPlacementID = MachineBlockPlacement::ID;
 
 INITIALIZE_PASS_BEGIN(MachineBlockPlacement, DEBUG_TYPE,
                       "Branch Probability Basic Block Placement", false, false)
-INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachinePostDominatorTreeWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachineLoopInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfo)
+INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfo)
+INITIALIZE_PASS_DEPENDENCY(MachinePostDominatorTree)
+INITIALIZE_PASS_DEPENDENCY(MachineLoopInfo)
 INITIALIZE_PASS_DEPENDENCY(ProfileSummaryInfoWrapperPass)
 INITIALIZE_PASS_END(MachineBlockPlacement, DEBUG_TYPE,
                     "Branch Probability Basic Block Placement", false, false)
@@ -1772,7 +1761,7 @@ MachineBasicBlock *MachineBlockPlacement::selectBestCandidateBlock(
   return BestBlock;
 }
 
-/// Retrieve the first unplaced basic block in the entire function.
+/// Retrieve the first unplaced basic block.
 ///
 /// This routine is called when we are unable to use the CFG to walk through
 /// all of the basic blocks and form a chain due to unnatural loops in the CFG.
@@ -1781,41 +1770,18 @@ MachineBasicBlock *MachineBlockPlacement::selectBestCandidateBlock(
 /// re-scanning the entire sequence on repeated calls to this routine.
 MachineBasicBlock *MachineBlockPlacement::getFirstUnplacedBlock(
     const BlockChain &PlacedChain,
-    MachineFunction::iterator &PrevUnplacedBlockIt) {
-
+    MachineFunction::iterator &PrevUnplacedBlockIt,
+    const BlockFilterSet *BlockFilter) {
   for (MachineFunction::iterator I = PrevUnplacedBlockIt, E = F->end(); I != E;
        ++I) {
+    if (BlockFilter && !BlockFilter->count(&*I))
+      continue;
     if (BlockToChain[&*I] != &PlacedChain) {
       PrevUnplacedBlockIt = I;
       // Now select the head of the chain to which the unplaced block belongs
       // as the block to place. This will force the entire chain to be placed,
       // and satisfies the requirements of merging chains.
       return *BlockToChain[&*I]->begin();
-    }
-  }
-  return nullptr;
-}
-
-/// Retrieve the first unplaced basic block among the blocks in BlockFilter.
-///
-/// This is similar to getFirstUnplacedBlock for the entire function, but since
-/// the size of BlockFilter is typically far less than the number of blocks in
-/// the entire function, iterating through the BlockFilter is more efficient.
-/// When processing the entire funciton, using the version without BlockFilter
-/// has a complexity of #(loops in function) * #(blocks in function), while this
-/// version has a complexity of sum(#(loops in block) foreach block in function)
-/// which is always smaller. For long function mostly sequential in structure,
-/// the complexity is amortized to 1 * #(blocks in function).
-MachineBasicBlock *MachineBlockPlacement::getFirstUnplacedBlock(
-    const BlockChain &PlacedChain,
-    BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt,
-    const BlockFilterSet *BlockFilter) {
-  assert(BlockFilter);
-  for (; PrevUnplacedBlockInFilterIt != BlockFilter->end();
-       ++PrevUnplacedBlockInFilterIt) {
-    BlockChain *C = BlockToChain[*PrevUnplacedBlockInFilterIt];
-    if (C != &PlacedChain) {
-      return *C->begin();
     }
   }
   return nullptr;
@@ -1860,9 +1826,6 @@ void MachineBlockPlacement::buildChain(
   assert(HeadBB && "BB must not be null.\n");
   assert(BlockToChain[HeadBB] == &Chain && "BlockToChainMap mis-match.\n");
   MachineFunction::iterator PrevUnplacedBlockIt = F->begin();
-  BlockFilterSet::iterator PrevUnplacedBlockInFilterIt;
-  if (BlockFilter)
-    PrevUnplacedBlockInFilterIt = BlockFilter->begin();
 
   const MachineBasicBlock *LoopHeaderBB = HeadBB;
   markChainSuccessors(Chain, LoopHeaderBB, BlockFilter);
@@ -1892,11 +1855,7 @@ void MachineBlockPlacement::buildChain(
       BestSucc = selectBestCandidateBlock(Chain, EHPadWorkList);
 
     if (!BestSucc) {
-      if (BlockFilter)
-        BestSucc = getFirstUnplacedBlock(Chain, PrevUnplacedBlockInFilterIt,
-                                         BlockFilter);
-      else
-        BestSucc = getFirstUnplacedBlock(Chain, PrevUnplacedBlockIt);
+      BestSucc = getFirstUnplacedBlock(Chain, PrevUnplacedBlockIt, BlockFilter);
       if (!BestSucc)
         break;
 
@@ -1908,8 +1867,7 @@ void MachineBlockPlacement::buildChain(
     // Check for that now.
     if (allowTailDupPlacement() && BestSucc && ShouldTailDup) {
       repeatedlyTailDuplicateBlock(BestSucc, BB, LoopHeaderBB, Chain,
-                                   BlockFilter, PrevUnplacedBlockIt,
-                                   PrevUnplacedBlockInFilterIt);
+                                       BlockFilter, PrevUnplacedBlockIt);
       // If the chosen successor was duplicated into BB, don't bother laying
       // it out, just go round the loop again with BB as the chain end.
       if (!BB->isSuccessor(BestSucc))
@@ -2602,15 +2560,7 @@ void MachineBlockPlacement::rotateLoopWithProfile(
 /// otherwise, collect all blocks in the loop.
 MachineBlockPlacement::BlockFilterSet
 MachineBlockPlacement::collectLoopBlockSet(const MachineLoop &L) {
-  // Collect the blocks in a set ordered by block number, as this gives the same
-  // order as they appear in the function.
-  struct MBBCompare {
-    bool operator()(const MachineBasicBlock *X,
-                    const MachineBasicBlock *Y) const {
-      return X->getNumber() < Y->getNumber();
-    }
-  };
-  std::set<const MachineBasicBlock *, MBBCompare> LoopBlockSet;
+  BlockFilterSet LoopBlockSet;
 
   // Filter cold blocks off from LoopBlockSet when profile data is available.
   // Collect the sum of frequencies of incoming edges to the loop header from
@@ -2641,11 +2591,7 @@ MachineBlockPlacement::collectLoopBlockSet(const MachineLoop &L) {
   } else
     LoopBlockSet.insert(L.block_begin(), L.block_end());
 
-  // Copy the blocks into a BlockFilterSet, as iterating it is faster than
-  // std::set. We will only remove blocks and never insert them, which will
-  // preserve the ordering.
-  BlockFilterSet Ret(LoopBlockSet.begin(), LoopBlockSet.end());
-  return Ret;
+  return LoopBlockSet;
 }
 
 /// Forms basic block chains from the natural loop structures.
@@ -2977,8 +2923,8 @@ void MachineBlockPlacement::alignBlocks() {
     unsigned MDAlign = 1;
     MDNode *LoopID = L->getLoopID();
     if (LoopID) {
-      for (const MDOperand &MDO : llvm::drop_begin(LoopID->operands())) {
-        MDNode *MD = dyn_cast<MDNode>(MDO);
+      for (unsigned I = 1, E = LoopID->getNumOperands(); I < E; ++I) {
+        MDNode *MD = dyn_cast<MDNode>(LoopID->getOperand(I));
         if (MD == nullptr)
           continue;
         MDString *S = dyn_cast<MDString>(MD->getOperand(0));
@@ -3071,14 +3017,14 @@ void MachineBlockPlacement::alignBlocks() {
 /// @return true if \p BB was removed.
 bool MachineBlockPlacement::repeatedlyTailDuplicateBlock(
     MachineBasicBlock *BB, MachineBasicBlock *&LPred,
-    const MachineBasicBlock *LoopHeaderBB, BlockChain &Chain,
-    BlockFilterSet *BlockFilter, MachineFunction::iterator &PrevUnplacedBlockIt,
-    BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt) {
+    const MachineBasicBlock *LoopHeaderBB,
+    BlockChain &Chain, BlockFilterSet *BlockFilter,
+    MachineFunction::iterator &PrevUnplacedBlockIt) {
   bool Removed, DuplicatedToLPred;
   bool DuplicatedToOriginalLPred;
-  Removed = maybeTailDuplicateBlock(
-      BB, LPred, Chain, BlockFilter, PrevUnplacedBlockIt,
-      PrevUnplacedBlockInFilterIt, DuplicatedToLPred);
+  Removed = maybeTailDuplicateBlock(BB, LPred, Chain, BlockFilter,
+                                    PrevUnplacedBlockIt,
+                                    DuplicatedToLPred);
   if (!Removed)
     return false;
   DuplicatedToOriginalLPred = DuplicatedToLPred;
@@ -3099,9 +3045,9 @@ bool MachineBlockPlacement::repeatedlyTailDuplicateBlock(
     if (ChainEnd == Chain.begin())
       break;
     DupPred = *std::prev(ChainEnd);
-    Removed = maybeTailDuplicateBlock(
-        DupBB, DupPred, Chain, BlockFilter, PrevUnplacedBlockIt,
-        PrevUnplacedBlockInFilterIt, DuplicatedToLPred);
+    Removed = maybeTailDuplicateBlock(DupBB, DupPred, Chain, BlockFilter,
+                                      PrevUnplacedBlockIt,
+                                      DuplicatedToLPred);
   }
   // If BB was duplicated into LPred, it is now scheduled. But because it was
   // removed, markChainSuccessors won't be called for its chain. Instead we
@@ -3128,9 +3074,9 @@ bool MachineBlockPlacement::repeatedlyTailDuplicateBlock(
 /// \p DuplicatedToLPred - True if the block was duplicated into LPred.
 /// \return  - True if the block was duplicated into all preds and removed.
 bool MachineBlockPlacement::maybeTailDuplicateBlock(
-    MachineBasicBlock *BB, MachineBasicBlock *LPred, BlockChain &Chain,
-    BlockFilterSet *BlockFilter, MachineFunction::iterator &PrevUnplacedBlockIt,
-    BlockFilterSet::iterator &PrevUnplacedBlockInFilterIt,
+    MachineBasicBlock *BB, MachineBasicBlock *LPred,
+    BlockChain &Chain, BlockFilterSet *BlockFilter,
+    MachineFunction::iterator &PrevUnplacedBlockIt,
     bool &DuplicatedToLPred) {
   DuplicatedToLPred = false;
   if (!shouldTailDuplicate(BB))
@@ -3172,25 +3118,7 @@ bool MachineBlockPlacement::maybeTailDuplicateBlock(
 
         // Handle the filter set
         if (BlockFilter) {
-          auto It = llvm::find(*BlockFilter, RemBB);
-          // Erase RemBB from BlockFilter, and keep PrevUnplacedBlockInFilterIt
-          // pointing to the same element as before.
-          if (It != BlockFilter->end()) {
-            if (It < PrevUnplacedBlockInFilterIt) {
-              const MachineBasicBlock *PrevBB = *PrevUnplacedBlockInFilterIt;
-              // BlockFilter is a SmallVector so all elements after RemBB are
-              // shifted to the front by 1 after its deletion.
-              auto Distance = PrevUnplacedBlockInFilterIt - It - 1;
-              PrevUnplacedBlockInFilterIt = BlockFilter->erase(It) + Distance;
-              assert(*PrevUnplacedBlockInFilterIt == PrevBB);
-              (void)PrevBB;
-            } else if (It == PrevUnplacedBlockInFilterIt)
-              // The block pointed by PrevUnplacedBlockInFilterIt is erased, we
-              // have to set it to the next element.
-              PrevUnplacedBlockInFilterIt = BlockFilter->erase(It);
-            else
-              BlockFilter->erase(It);
-          }
+          BlockFilter->remove(RemBB);
         }
 
         // Remove the block from loop info.
@@ -3443,10 +3371,10 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
     return false;
 
   F = &MF;
-  MBPI = &getAnalysis<MachineBranchProbabilityInfoWrapperPass>().getMBPI();
+  MBPI = &getAnalysis<MachineBranchProbabilityInfo>();
   MBFI = std::make_unique<MBFIWrapper>(
-      getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI());
-  MLI = &getAnalysis<MachineLoopInfoWrapperPass>().getLI();
+      getAnalysis<MachineBlockFrequencyInfo>());
+  MLI = &getAnalysis<MachineLoopInfo>();
   TII = MF.getSubtarget().getInstrInfo();
   TLI = MF.getSubtarget().getTargetLowering();
   MPDT = nullptr;
@@ -3489,7 +3417,7 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
     TailDupSize = TII->getTailDuplicateSize(PassConfig->getOptLevel());
 
   if (allowTailDupPlacement()) {
-    MPDT = &getAnalysis<MachinePostDominatorTreeWrapperPass>().getPostDomTree();
+    MPDT = &getAnalysis<MachinePostDominatorTree>();
     bool OptForSize = MF.getFunction().hasOptSize() ||
                       llvm::shouldOptimizeForSize(&MF, PSI, &MBFI->getMBFI());
     if (OptForSize)
@@ -3521,7 +3449,7 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
       ComputedEdges.clear();
       // Must redo the post-dominator tree if blocks were changed.
       if (MPDT)
-        MPDT->recalculate(MF);
+        MPDT->runOnMachineFunction(MF);
       ChainAllocator.DestroyAll();
       buildCFGChains();
     }
@@ -3529,8 +3457,7 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
 
   // Apply a post-processing optimizing block placement.
   if (MF.size() >= 3 && EnableExtTspBlockPlacement &&
-      (ApplyExtTspWithoutProfile || MF.getFunction().hasProfileData()) &&
-      MF.size() <= ExtTspBlockPlacementMaxBlocks) {
+      (ApplyExtTspWithoutProfile || MF.getFunction().hasProfileData())) {
     // Find a new placement and modify the layout of the blocks in the function.
     applyExtTsp();
 
@@ -3573,7 +3500,7 @@ bool MachineBlockPlacement::runOnMachineFunction(MachineFunction &MF) {
   }
   if (ViewBlockLayoutWithBFI != GVDT_None &&
       (ViewBlockFreqFuncName.empty() ||
-       F->getFunction().getName() == ViewBlockFreqFuncName)) {
+       F->getFunction().getName().equals(ViewBlockFreqFuncName))) {
     if (RenumberBlocksBeforeView)
       MF.RenumberBlocks();
     MBFI->view("MBP." + MF.getName(), false);
@@ -3649,11 +3576,6 @@ void MachineBlockPlacement::assignBlockOrder(
     const std::vector<const MachineBasicBlock *> &NewBlockOrder) {
   assert(F->size() == NewBlockOrder.size() && "Incorrect size of block order");
   F->RenumberBlocks();
-  // At this point, we possibly removed blocks from the function, so we can't
-  // renumber the domtree. At this point, we don't need it anymore, though.
-  // TODO: move this to the point where the dominator tree is actually
-  // invalidated (i.e., where blocks are removed without updating the domtree).
-  MPDT = nullptr;
 
   bool HasChanges = false;
   for (size_t I = 0; I < NewBlockOrder.size(); I++) {
@@ -3750,8 +3672,8 @@ public:
   bool runOnMachineFunction(MachineFunction &F) override;
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
-    AU.addRequired<MachineBranchProbabilityInfoWrapperPass>();
-    AU.addRequired<MachineBlockFrequencyInfoWrapperPass>();
+    AU.addRequired<MachineBranchProbabilityInfo>();
+    AU.addRequired<MachineBlockFrequencyInfo>();
     AU.setPreservesAll();
     MachineFunctionPass::getAnalysisUsage(AU);
   }
@@ -3765,8 +3687,8 @@ char &llvm::MachineBlockPlacementStatsID = MachineBlockPlacementStats::ID;
 
 INITIALIZE_PASS_BEGIN(MachineBlockPlacementStats, "block-placement-stats",
                       "Basic Block Placement Stats", false, false)
-INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfoWrapperPass)
-INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfoWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(MachineBranchProbabilityInfo)
+INITIALIZE_PASS_DEPENDENCY(MachineBlockFrequencyInfo)
 INITIALIZE_PASS_END(MachineBlockPlacementStats, "block-placement-stats",
                     "Basic Block Placement Stats", false, false)
 
@@ -3778,8 +3700,8 @@ bool MachineBlockPlacementStats::runOnMachineFunction(MachineFunction &F) {
   if (!isFunctionInPrintList(F.getName()))
     return false;
 
-  MBPI = &getAnalysis<MachineBranchProbabilityInfoWrapperPass>().getMBPI();
-  MBFI = &getAnalysis<MachineBlockFrequencyInfoWrapperPass>().getMBFI();
+  MBPI = &getAnalysis<MachineBranchProbabilityInfo>();
+  MBFI = &getAnalysis<MachineBlockFrequencyInfo>();
 
   for (MachineBasicBlock &MBB : F) {
     BlockFrequency BlockFreq = MBFI->getBlockFreq(&MBB);

@@ -37,7 +37,6 @@
 // The mov_dpp instruction should reside in the same BB as all its uses
 //===----------------------------------------------------------------------===//
 
-#include "GCNDPPCombine.h"
 #include "AMDGPU.h"
 #include "GCNSubtarget.h"
 #include "MCTargetDesc/AMDGPUMCTargetDesc.h"
@@ -52,7 +51,7 @@ STATISTIC(NumDPPMovsCombined, "Number of DPP moves combined.");
 
 namespace {
 
-class GCNDPPCombine {
+class GCNDPPCombine : public MachineFunctionPass {
   MachineRegisterInfo *MRI;
   const SIInstrInfo *TII;
   const GCNSubtarget *ST;
@@ -77,18 +76,12 @@ class GCNDPPCombine {
 
   bool combineDPPMov(MachineInstr &MI) const;
 
-  int getDPPOp(unsigned Op, bool IsShrinkable) const;
-  bool isShrinkable(MachineInstr &MI) const;
-
-public:
-  bool run(MachineFunction &MF);
-};
-
-class GCNDPPCombineLegacy : public MachineFunctionPass {
 public:
   static char ID;
 
-  GCNDPPCombineLegacy() : MachineFunctionPass(ID) {}
+  GCNDPPCombine() : MachineFunctionPass(ID) {
+    initializeGCNDPPCombinePass(*PassRegistry::getPassRegistry());
+  }
 
   bool runOnMachineFunction(MachineFunction &MF) override;
 
@@ -103,19 +96,22 @@ public:
     return MachineFunctionProperties()
       .set(MachineFunctionProperties::Property::IsSSA);
   }
+
+private:
+  int getDPPOp(unsigned Op, bool IsShrinkable) const;
+  bool isShrinkable(MachineInstr &MI) const;
 };
 
 } // end anonymous namespace
 
-INITIALIZE_PASS(GCNDPPCombineLegacy, DEBUG_TYPE, "GCN DPP Combine", false,
-                false)
+INITIALIZE_PASS(GCNDPPCombine, DEBUG_TYPE, "GCN DPP Combine", false, false)
 
-char GCNDPPCombineLegacy::ID = 0;
+char GCNDPPCombine::ID = 0;
 
-char &llvm::GCNDPPCombineLegacyID = GCNDPPCombineLegacy::ID;
+char &llvm::GCNDPPCombineID = GCNDPPCombine::ID;
 
 FunctionPass *llvm::createGCNDPPCombinePass() {
-  return new GCNDPPCombineLegacy();
+  return new GCNDPPCombine();
 }
 
 bool GCNDPPCombine::isShrinkable(MachineInstr &MI) const {
@@ -144,8 +140,7 @@ bool GCNDPPCombine::isShrinkable(MachineInstr &MI) const {
   if (!hasNoImmOrEqual(MI, AMDGPU::OpName::src0_modifiers, 0, Mask) ||
       !hasNoImmOrEqual(MI, AMDGPU::OpName::src1_modifiers, 0, Mask) ||
       !hasNoImmOrEqual(MI, AMDGPU::OpName::clamp, 0) ||
-      !hasNoImmOrEqual(MI, AMDGPU::OpName::omod, 0) ||
-      !hasNoImmOrEqual(MI, AMDGPU::OpName::byte_sel, 0)) {
+      !hasNoImmOrEqual(MI, AMDGPU::OpName::omod, 0)) {
     LLVM_DEBUG(dbgs() << "  Inst has non-default modifiers\n");
     return false;
   }
@@ -373,7 +368,8 @@ MachineInstr *GCNDPPCombine::createDPPInst(MachineInstr &OrigMI,
       }
       // Validate OP_SEL has to be set to all 0 and OP_SEL_HI has to be set to
       // all 1.
-      if (TII->getNamedOperand(OrigMI, AMDGPU::OpName::op_sel)) {
+      if (auto *OpSelOpr =
+              TII->getNamedOperand(OrigMI, AMDGPU::OpName::op_sel)) {
         int64_t OpSel = 0;
         OpSel |= (Mod0 ? (!!(Mod0->getImm() & SISrcMods::OP_SEL_0) << 0) : 0);
         OpSel |= (Mod1 ? (!!(Mod1->getImm() & SISrcMods::OP_SEL_0) << 1) : 0);
@@ -389,7 +385,8 @@ MachineInstr *GCNDPPCombine::createDPPInst(MachineInstr &OrigMI,
         if (AMDGPU::hasNamedOperand(DPPOp, AMDGPU::OpName::op_sel))
           DPPInst.addImm(OpSel);
       }
-      if (TII->getNamedOperand(OrigMI, AMDGPU::OpName::op_sel_hi)) {
+      if (auto *OpSelHiOpr =
+              TII->getNamedOperand(OrigMI, AMDGPU::OpName::op_sel_hi)) {
         int64_t OpSelHi = 0;
         OpSelHi |= (Mod0 ? (!!(Mod0->getImm() & SISrcMods::OP_SEL_1) << 0) : 0);
         OpSelHi |= (Mod1 ? (!!(Mod1->getImm() & SISrcMods::OP_SEL_1) << 1) : 0);
@@ -413,11 +410,6 @@ MachineInstr *GCNDPPCombine::createDPPInst(MachineInstr &OrigMI,
       auto *NegHiOpr = TII->getNamedOperand(OrigMI, AMDGPU::OpName::neg_hi);
       if (NegHiOpr && AMDGPU::hasNamedOperand(DPPOp, AMDGPU::OpName::neg_hi)) {
         DPPInst.addImm(NegHiOpr->getImm());
-      }
-      auto *ByteSelOpr = TII->getNamedOperand(OrigMI, AMDGPU::OpName::byte_sel);
-      if (ByteSelOpr &&
-          AMDGPU::hasNamedOperand(DPPOp, AMDGPU::OpName::byte_sel)) {
-        DPPInst.addImm(ByteSelOpr->getImm());
       }
     }
     DPPInst.add(*TII->getNamedOperand(MovMI, AMDGPU::OpName::dpp_ctrl));
@@ -753,16 +745,9 @@ bool GCNDPPCombine::combineDPPMov(MachineInstr &MovMI) const {
   return !Rollback;
 }
 
-bool GCNDPPCombineLegacy::runOnMachineFunction(MachineFunction &MF) {
-  if (skipFunction(MF.getFunction()))
-    return false;
-
-  return GCNDPPCombine().run(MF);
-}
-
-bool GCNDPPCombine::run(MachineFunction &MF) {
+bool GCNDPPCombine::runOnMachineFunction(MachineFunction &MF) {
   ST = &MF.getSubtarget<GCNSubtarget>();
-  if (!ST->hasDPP())
+  if (!ST->hasDPP() || skipFunction(MF.getFunction()))
     return false;
 
   MRI = &MF.getRegInfo();
@@ -791,20 +776,4 @@ bool GCNDPPCombine::run(MachineFunction &MF) {
     }
   }
   return Changed;
-}
-
-PreservedAnalyses GCNDPPCombinePass::run(MachineFunction &MF,
-                                         MachineFunctionAnalysisManager &) {
-  if (MF.getFunction().hasOptNone())
-    return PreservedAnalyses::all();
-
-  MFPropsModifier _(*this, MF);
-
-  bool Changed = GCNDPPCombine().run(MF);
-  if (!Changed)
-    return PreservedAnalyses::all();
-
-  auto PA = getMachineFunctionPassPreservedAnalyses();
-  PA.preserveSet<CFGAnalyses>();
-  return PA;
 }

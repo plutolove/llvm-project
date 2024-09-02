@@ -28,12 +28,6 @@ void initializeDXILPrepareModulePass(PassRegistry &);
 /// Pass to convert modules into DXIL-compatable modules
 ModulePass *createDXILPrepareModulePass();
 
-/// Initializer for DXIL Intrinsic Expansion
-void initializeDXILIntrinsicExpansionLegacyPass(PassRegistry &);
-
-/// Pass to expand intrinsic operations that lack DXIL opCodes
-ModulePass *createDXILIntrinsicExpansionLegacyPass();
-
 /// Initializer for DXILOpLowering
 void initializeDXILOpLoweringLegacyPass(PassRegistry &);
 
@@ -41,19 +35,19 @@ void initializeDXILOpLoweringLegacyPass(PassRegistry &);
 ModulePass *createDXILOpLoweringLegacyPass();
 
 /// Initializer for DXILTranslateMetadata.
-void initializeDXILTranslateMetadataLegacyPass(PassRegistry &);
+void initializeDXILTranslateMetadataPass(PassRegistry &);
 
 /// Pass to emit metadata for DXIL.
-ModulePass *createDXILTranslateMetadataLegacyPass();
+ModulePass *createDXILTranslateMetadataPass();
 
 /// Initializer for DXILTranslateMetadata.
-void initializeDXILResourceMDWrapperPass(PassRegistry &);
+void initializeDXILResourceWrapperPass(PassRegistry &);
 
 /// Pass to pretty print DXIL metadata.
-ModulePass *createDXILPrettyPrinterLegacyPass(raw_ostream &OS);
+ModulePass *createDXILPrettyPrinterPass(raw_ostream &OS);
 
 /// Initializer for DXILPrettyPrinter.
-void initializeDXILPrettyPrinterLegacyPass(PassRegistry &);
+void initializeDXILPrettyPrinterPass(PassRegistry &);
 
 /// Initializer for dxil::ShaderFlagsAnalysisWrapper pass.
 void initializeShaderFlagsAnalysisWrapperPass(PassRegistry &);
@@ -63,13 +57,6 @@ void initializeDXContainerGlobalsPass(PassRegistry &);
 
 /// Pass for generating DXContainer part globals.
 ModulePass *createDXContainerGlobalsPass();
-
-/// Initializer for DXILFinalizeLinkage pass.
-void initializeDXILFinalizeLinkageLegacyPass(PassRegistry &);
-
-/// Pass to finalize linkage of functions.
-ModulePass *createDXILFinalizeLinkageLegacyPass();
-
 } // namespace llvm
 
 #endif // LLVM_LIB_TARGET_DIRECTX_DIRECTX_H

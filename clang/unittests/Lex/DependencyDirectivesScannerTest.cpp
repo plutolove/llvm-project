@@ -583,12 +583,10 @@ TEST(MinimizeSourceToDependencyDirectivesTest, UnderscorePragma) {
       R"(_Pragma(u"clang module import"))", Out));
   EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
 
-  // R"()" strings are enabled by default.
+  // FIXME: R"()" strings depend on using C++ 11 language mode
   ASSERT_FALSE(minimizeSourceToDependencyDirectives(
       R"(_Pragma(R"abc(clang module import)abc"))", Out));
-  EXPECT_STREQ(R"(_Pragma(R"abc(clang module import)abc"))"
-               "\n",
-               Out.data());
+  EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
 }
 
 TEST(MinimizeSourceToDependencyDirectivesTest, Include) {
@@ -648,33 +646,6 @@ TEST(MinimizeSourceToDependencyDirectivesTest, AtImport) {
   ASSERT_FALSE(minimizeSourceToDependencyDirectives(
       "@import /*x*/ A /*x*/ . /*x*/ B /*x*/ \n /*x*/ ; /*x*/", Out));
   EXPECT_STREQ("@import A.B;\n", Out.data());
-}
-
-TEST(MinimizeSourceToDependencyDirectivesTest, EmptyIncludesAndImports) {
-  SmallVector<char, 128> Out;
-
-  ASSERT_FALSE(minimizeSourceToDependencyDirectives("#import\n", Out));
-  EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
-
-  ASSERT_FALSE(minimizeSourceToDependencyDirectives("#include\n", Out));
-  EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
-
-  ASSERT_FALSE(minimizeSourceToDependencyDirectives("#ifdef A\n"
-                                                    "#import \n"
-                                                    "#endif\n",
-                                                    Out));
-  // The ifdef block is removed because it's "empty".
-  EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
-
-  ASSERT_FALSE(minimizeSourceToDependencyDirectives("#ifdef A\n"
-                                                    "#import \n"
-                                                    "#define B\n"
-                                                    "#endif\n",
-                                                    Out));
-  EXPECT_STREQ("#ifdef A\n"
-               "#define B\n"
-               "#endif\n",
-               Out.data());
 }
 
 TEST(MinimizeSourceToDependencyDirectivesTest, AtImportFailures) {
@@ -995,23 +966,6 @@ ort \
   ASSERT_EQ(Directives.size(), 11u);
   EXPECT_EQ(Directives[0].Kind, pp_include);
   EXPECT_EQ(Directives[1].Kind, cxx_export_module_decl);
-}
-
-TEST(MinimizeSourceToDependencyDirectivesTest, ObjCMethodArgs) {
-  SmallVector<char, 128> Out;
-
-  StringRef Source = R"(
-    @interface SomeObjcClass
-      - (void)func:(int)otherData
-              module:(int)module
-              import:(int)import;
-    @end
-  )";
-
-  ASSERT_FALSE(minimizeSourceToDependencyDirectives(Source, Out));
-  // `module :` and `import :` not followed by an identifier are not treated as
-  // directive lines because they can be method argument decls.
-  EXPECT_STREQ("<TokBeforeEOF>\n", Out.data());
 }
 
 TEST(MinimizeSourceToDependencyDirectivesTest, TokensBeforeEOF) {

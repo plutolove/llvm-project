@@ -30,7 +30,7 @@ ClangDocContext
 getClangDocContext(std::vector<std::string> UserStylesheets = {},
                    StringRef RepositoryUrl = "") {
   ClangDocContext CDCtx{
-      {}, "test-project", {}, {}, {}, RepositoryUrl, UserStylesheets};
+      {}, "test-project", {}, {}, {}, RepositoryUrl, UserStylesheets, {}};
   CDCtx.UserStylesheets.insert(
       CDCtx.UserStylesheets.begin(),
       "../share/clang/clang-doc-default-stylesheet.css");
@@ -66,7 +66,6 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
 <title>namespace Namespace</title>
 <link rel="stylesheet" href="../clang-doc-default-stylesheet.css"/>
 <link rel="stylesheet" href="../user-provided-stylesheet.css"/>
-<script src="../index_json.js"></script>
 <script src="../index.js"></script>
 <header id="project-title">test-project</header>
 <main>
@@ -92,13 +91,7 @@ TEST(HTMLGeneratorTest, emitNamespaceHTML) {
     </div>
     <h2 id="Enums">Enums</h2>
     <div>
-      <table id="0000000000000000000000000000000000000000">
-        <thead>
-          <tr>
-            <th colspan="2">enum OneEnum</th>
-          </tr>
-        </thead>
-      </table>
+      <h3 id="0000000000000000000000000000000000000000">enum OneEnum</h3>
     </div>
   </div>
   <div id="sidebar-right" class="col-xs-6 col-sm-6 col-md-2 sidebar sidebar-offcanvas-right">
@@ -183,7 +176,6 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
 <meta charset="utf-8"/>
 <title>class r</title>
 <link rel="stylesheet" href="../../../clang-doc-default-stylesheet.css"/>
-<script src="../../../index_json.js"></script>
 <script src="../../../index.js"></script>
 <header id="project-title">test-project</header>
 <main>
@@ -203,9 +195,7 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
     </p>
     <h2 id="Members">Members</h2>
     <ul>
-      <li>
-        <div>private int X</div>
-      </li>
+      <li>private int X</li>
     </ul>
     <h2 id="Records">Records</h2>
     <ul>
@@ -220,13 +210,7 @@ TEST(HTMLGeneratorTest, emitRecordHTML) {
     </div>
     <h2 id="Enums">Enums</h2>
     <div>
-      <table id="0000000000000000000000000000000000000000">
-        <thead>
-          <tr>
-            <th colspan="2">enum OneEnum</th>
-          </tr>
-        </thead>
-      </table>
+      <h3 id="0000000000000000000000000000000000000000">enum OneEnum</h3>
     </div>
   </div>
   <div id="sidebar-right" class="col-xs-6 col-sm-6 col-md-2 sidebar sidebar-offcanvas-right">
@@ -306,7 +290,6 @@ TEST(HTMLGeneratorTest, emitFunctionHTML) {
 <meta charset="utf-8"/>
 <title></title>
 <link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
-<script src="index_json.js"></script>
 <script src="index.js"></script>
 <header id="project-title">test-project</header>
 <main>
@@ -354,25 +337,15 @@ TEST(HTMLGeneratorTest, emitEnumHTML) {
 <meta charset="utf-8"/>
 <title></title>
 <link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
-<script src="index_json.js"></script>
 <script src="index.js"></script>
 <header id="project-title">test-project</header>
 <main>
   <div id="sidebar-left" path="" class="col-xs-6 col-sm-3 col-md-2 sidebar sidebar-offcanvas-left"></div>
   <div id="main-content" class="col-xs-12 col-sm-9 col-md-8 main-content">
-    <table id="0000000000000000000000000000000000000000">
-      <thead>
-        <tr>
-          <th colspan="2">enum class e</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>X</td>
-          <td>0</td>
-        </tr>
-      </tbody>
-    </table>
+    <h3 id="0000000000000000000000000000000000000000">enum class e</h3>
+    <ul>
+      <li>X</li>
+    </ul>
     <p>
       Defined at line 
       <a href="https://www.repository.com/test.cpp#10">10</a>
@@ -449,7 +422,6 @@ TEST(HTMLGeneratorTest, emitCommentHTML) {
 <meta charset="utf-8"/>
 <title></title>
 <link rel="stylesheet" href="clang-doc-default-stylesheet.css"/>
-<script src="index_json.js"></script>
 <script src="index.js"></script>
 <header id="project-title">test-project</header>
 <main>

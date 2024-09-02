@@ -13,7 +13,7 @@ import unittest
 
 def find_function_declarations(node, declarations=[]):
     if node.kind == clang.cindex.CursorKind.FUNCTION_DECL:
-        declarations.append(node)
+        declarations.append((node.spelling, node.exception_specification_kind))
     for child in node.get_children():
         declarations = find_function_declarations(child, declarations)
     return declarations
@@ -33,12 +33,4 @@ class TestExceptionSpecificationKind(unittest.TestCase):
             ("square2", ExceptionSpecificationKind.BASIC_NOEXCEPT),
             ("square3", ExceptionSpecificationKind.COMPUTED_NOEXCEPT),
         ]
-        from_cursor = [
-            (node.spelling, node.exception_specification_kind) for node in declarations
-        ]
-        from_type = [
-            (node.spelling, node.type.get_exception_specification_kind())
-            for node in declarations
-        ]
-        self.assertListEqual(from_cursor, expected)
-        self.assertListEqual(from_type, expected)
+        self.assertListEqual(declarations, expected)

@@ -7,38 +7,91 @@
 //===----------------------------------------------------------------------===//
 
 #include "mlir/Dialect/Mesh/Transforms/Spmdization.h"
-
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Mesh/IR/MeshDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 #include "mlir/Dialect/Mesh/IR/MeshOps.h"
-#include "mlir/Dialect/Mesh/Interfaces/ShardingInterface.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Diagnostics.h"
-#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/SymbolTable.h"
 #include "mlir/IR/Value.h"
-#include "mlir/Interfaces/ControlFlowInterfaces.h"
-#include "mlir/Interfaces/FunctionInterfaces.h"
-#include "mlir/Pass/Pass.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
+#include "mlir/Support/MathExtras.h"
+#include "llvm/ADT/ADL.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Casting.h"
+#include <algorithm>
 #include <iterator>
+#include <numeric>
 #include <optional>
 #include <tuple>
 #include <type_traits>
 
-namespace mlir::mesh {
+namespace mlir {
+namespace mesh {
+
+int64_t shardDimension(int64_t dim, int64_t shardCount) {
+  if (ShapedType::isDynamic(dim) || ShapedType::isDynamic(shardCount))
+    return ShapedType::kDynamic;
+
+  assert(dim % shardCount == 0);
+  return ceilDiv(dim, shardCount);
+}
+
+int64_t unshardDimension(int64_t dim, int64_t shardCount) {
+  if (ShapedType::isDynamic(dim) || ShapedType::isDynamic(shardCount))
+    return ShapedType::kDynamic;
+
+  return dim * shardCount;
+}
+
+template <typename MeshShape, typename SplitAxes>
+int64_t shardCount(const MeshShape &meshShape, const SplitAxes &splitAxes) {
+  int64_t res = 1;
+  for (auto splitAxis : splitAxes) {
+    int64_t meshDimSize = meshShape[splitAxis];
+    if (ShapedType::isDynamic(meshDimSize)) {
+      return ShapedType::kDynamic;
+    }
+    res *= meshDimSize;
+  }
+  return res;
+}
+
+// Compute the shape for the tensor on each device in the mesh.
+// Example:
+// On a 2x4x? mesh with split axes = [[0], [1], [2]] the shape ?x5x1
+// would result in a shape for each shard of ?x2x?.
+template <typename InShape, typename MeshShape, typename SplitAxes,
+          typename OutShape>
+static void shardShape(const InShape &inShape, const MeshShape &meshShape,
+                       const SplitAxes &splitAxes, OutShape &outShape) {
+  std::copy(llvm::adl_begin(inShape), llvm::adl_end(inShape),
+            llvm::adl_begin(outShape));
+  for (auto [tensorAxis, innerSplitAxes] : llvm::enumerate(splitAxes)) {
+    outShape[tensorAxis] =
+        shardDimension(inShape[tensorAxis],
+                       shardCount(meshShape, innerSplitAxes.asArrayRef()));
+  }
+}
+
+ShapedType shardShapedType(ShapedType shape, ClusterOp mesh,
+                           MeshShardingAttr sharding) {
+  using Dim = std::decay_t<decltype(shape.getDimSize(0))>;
+  SmallVector<Dim> resShapeArr(shape.getShape().size());
+  shardShape(shape.getShape(), mesh.getShape(), sharding.getSplitAxes(),
+             resShapeArr);
+  return shape.clone(resShapeArr);
+}
 
 template <typename SourceAxes, typename TargetAxes>
 static bool arePartialAxesCompatible(const SourceAxes &sourceAxes,
@@ -54,10 +107,10 @@ static bool arePartialAxesCompatible(const SourceAxes &sourceAxes,
 // targetSharding = <@mesh_1d, [[]]>
 // Then will apply all-reduce on the source value
 // and return it with the sharding <@mesh_1d, [[0]]>.
-static std::tuple<TypedValue<ShapedType>, MeshSharding>
+static std::tuple<TypedValue<ShapedType>, MeshShardingAttr>
 handlePartialAxesDuringResharding(OpBuilder &builder,
-                                  MeshSharding sourceSharding,
-                                  MeshSharding targetSharding,
+                                  MeshShardingAttr sourceSharding,
+                                  MeshShardingAttr targetSharding,
                                   TypedValue<ShapedType> sourceShard) {
   if (sourceSharding.getPartialAxes().empty() &&
       targetSharding.getPartialAxes().empty()) {
@@ -85,13 +138,14 @@ handlePartialAxesDuringResharding(OpBuilder &builder,
   }
 
   builder.setInsertionPointAfterValue(sourceShard);
-  TypedValue<ShapedType> resultValue = cast<TypedValue<ShapedType>>(
+  TypedValue<ShapedType> resultValue =
       builder
           .create<AllReduceOp>(sourceShard.getLoc(), sourceShard.getType(),
-                               sourceSharding.getMeshAttr().getLeafReference(),
+                               sourceSharding.getCluster().getLeafReference(),
                                allReduceMeshAxes, sourceShard,
                                sourceSharding.getPartialType())
-          .getResult());
+          .getResult()
+          .cast<TypedValue<ShapedType>>();
 
   llvm::SmallVector<MeshAxis> remainingPartialAxes;
   llvm::copy_if(sourceShardingPartialAxesSet,
@@ -99,16 +153,16 @@ handlePartialAxesDuringResharding(OpBuilder &builder,
                 [&targetShardingPartialAxesSet](Axis a) {
                   return targetShardingPartialAxesSet.contains(a);
                 });
-  MeshSharding resultSharding = MeshSharding::get(
-      sourceSharding.getMeshAttr(), sourceSharding.getSplitAxes(),
-      remainingPartialAxes, sourceSharding.getPartialType());
+  MeshShardingAttr resultSharding =
+      MeshShardingAttr::get(builder.getContext(), sourceSharding.getCluster(),
+                            sourceSharding.getSplitAxes(), remainingPartialAxes,
+                            sourceSharding.getPartialType());
   return {resultValue, resultSharding};
 }
 
-static MeshSharding targetShardingInSplitLastAxis(MLIRContext *ctx,
-                                                  MeshSharding sourceSharding,
-                                                  int64_t splitTensorAxis,
-                                                  MeshAxis splitMeshAxis) {
+static MeshShardingAttr
+targetShardingInSplitLastAxis(MLIRContext *ctx, MeshShardingAttr sourceSharding,
+                              int64_t splitTensorAxis, MeshAxis splitMeshAxis) {
   SmallVector<MeshAxesAttr> targetShardingSplitAxes =
       llvm::to_vector(sourceSharding.getSplitAxes());
   while (static_cast<int64_t>(targetShardingSplitAxes.size()) <=
@@ -120,28 +174,97 @@ static MeshSharding targetShardingInSplitLastAxis(MLIRContext *ctx,
   targetSplitAxes.push_back(splitMeshAxis);
   targetShardingSplitAxes[splitTensorAxis] =
       MeshAxesAttr::get(ctx, targetSplitAxes);
-  return MeshSharding::get(
-      sourceSharding.getMeshAttr(), targetShardingSplitAxes,
+  return MeshShardingAttr::get(
+      ctx, sourceSharding.getCluster(), targetShardingSplitAxes,
       sourceSharding.getPartialAxes(), sourceSharding.getPartialType());
+}
+
+static ShapedType targetShapeInSplitLastAxis(ShapedType sourceShape,
+                                             int64_t splitTensorAxis,
+                                             int64_t splitCount) {
+  SmallVector<int64_t> targetShape = llvm::to_vector(sourceShape.getShape());
+  targetShape[splitTensorAxis] =
+      shardDimension(targetShape[splitTensorAxis], splitCount);
+  return sourceShape.cloneWith(targetShape, sourceShape.getElementType());
 }
 
 // Split a replicated tensor along a mesh axis.
 // e.g. [[0, 1]] -> [[0, 1, 2]].
 // Returns the spmdized target value with its sharding.
-static std::tuple<TypedValue<ShapedType>, MeshSharding>
+//
+// The implementation is the extract the tensor slice corresponding
+// to the current device.
+static std::tuple<TypedValue<ShapedType>, MeshShardingAttr>
 splitLastAxisInResharding(ImplicitLocOpBuilder &builder,
-                          MeshSharding sourceSharding,
-                          TypedValue<ShapedType> sourceShard, MeshOp mesh,
+                          MeshShardingAttr sourceSharding,
+                          TypedValue<ShapedType> sourceShard, ClusterOp mesh,
                           int64_t splitTensorAxis, MeshAxis splitMeshAxis) {
-  TypedValue<ShapedType> targetShard = cast<TypedValue<ShapedType>>(
+  MLIRContext *ctx = builder.getContext();
+  builder.setInsertionPointAfterValue(sourceShard);
+
+  Value zero = builder.create<arith::ConstantOp>(builder.getIndexAttr(0));
+
+  Value processIndexAlongAxis =
       builder
-          .create<AllSliceOp>(sourceShard, mesh,
-                              ArrayRef<MeshAxis>(splitMeshAxis),
-                              splitTensorAxis)
-          .getResult());
-  MeshSharding targetSharding = targetShardingInSplitLastAxis(
-      builder.getContext(), sourceSharding, splitTensorAxis, splitMeshAxis);
-  return {targetShard, targetSharding};
+          .create<ProcessMultiIndexOp>(mesh.getSymName(),
+                                       SmallVector<MeshAxis>({splitMeshAxis}))
+          .getResult()[0];
+
+  MeshShardingAttr targetSharding = targetShardingInSplitLastAxis(
+      ctx, sourceSharding, splitTensorAxis, splitMeshAxis);
+  ShapedType targetShape = targetShapeInSplitLastAxis(
+      sourceShard.getType(), splitTensorAxis, mesh.getShape()[splitMeshAxis]);
+
+  Value meshAxisSize =
+      builder
+          .create<ClusterShapeOp>(mesh.getSymName(),
+                                  SmallVector<MeshAxis>({splitMeshAxis}))
+          .getResult()[0];
+
+  Value sourceAxisSize =
+      builder.create<tensor::DimOp>(sourceShard, splitTensorAxis);
+  Value sourceAxisSizeModMeshAxisSize =
+      builder.create<arith::RemUIOp>(sourceAxisSize, meshAxisSize);
+  Value isTargetShapeExactlyDivisible = builder.create<arith::CmpIOp>(
+      arith::CmpIPredicate::eq, sourceAxisSizeModMeshAxisSize, zero);
+  builder.create<cf::AssertOp>(
+      isTargetShapeExactlyDivisible,
+      "Sharding a tensor with axis size that is not exactly divisible by the "
+      "mesh axis size is not supported.");
+  Value targetAxisSize =
+      builder.create<arith::DivUIOp>(sourceAxisSize, meshAxisSize);
+  Value axisOffset =
+      builder.create<arith::MulIOp>(targetAxisSize, processIndexAlongAxis);
+  SmallVector<int64_t> staticOffsets(targetShape.getRank(), 0);
+  staticOffsets[splitTensorAxis] = ShapedType::kDynamic;
+  DenseI64ArrayAttr staticOffsetsAttr =
+      DenseI64ArrayAttr::get(ctx, staticOffsets);
+  SmallVector<Value> dynamicOffsets(1, axisOffset);
+
+  DenseI64ArrayAttr staticSizesAttr =
+      DenseI64ArrayAttr::get(ctx, targetShape.getShape());
+  SmallVector<Value> dynamicSizes;
+  for (int64_t i = 0; i < targetShape.getRank(); ++i) {
+    if (ShapedType::isDynamic(staticSizesAttr.asArrayRef()[i])) {
+      if (i == splitTensorAxis) {
+        dynamicSizes.push_back(targetAxisSize);
+      } else {
+        Value dimSize = builder.create<tensor::DimOp>(sourceShard, i);
+        dynamicSizes.push_back(dimSize);
+      }
+    }
+  }
+
+  DenseI64ArrayAttr staticStridesAttr = DenseI64ArrayAttr::get(
+      ctx, SmallVector<int64_t>(targetShape.getRank(), 1));
+  TypedValue<RankedTensorType> targetShard =
+      builder
+          .create<tensor::ExtractSliceOp>(
+              targetShape, sourceShard, dynamicOffsets, dynamicSizes,
+              SmallVector<Value>({}), staticOffsetsAttr, staticSizesAttr,
+              staticStridesAttr)
+          .getResult();
+  return {targetShard.cast<TypedValue<ShapedType>>(), targetSharding};
 }
 
 // Detect if the resharding is of type e.g.
@@ -150,8 +273,8 @@ splitLastAxisInResharding(ImplicitLocOpBuilder &builder,
 // Does not detect insertions like
 // [[0, 1]] -> [[0, 2, 1]].
 static std::optional<std::tuple<int64_t, MeshAxis>>
-detectSplitLastAxisInResharding(MeshSharding sourceSharding,
-                                MeshSharding targetSharding) {
+detectSplitLastAxisInResharding(MeshShardingAttr sourceSharding,
+                                MeshShardingAttr targetSharding) {
   for (size_t tensorAxis = 0; tensorAxis < targetSharding.getSplitAxes().size();
        ++tensorAxis) {
     if (sourceSharding.getSplitAxes().size() > tensorAxis) {
@@ -181,10 +304,10 @@ detectSplitLastAxisInResharding(MeshSharding sourceSharding,
   return std::nullopt;
 }
 
-static std::optional<std::tuple<TypedValue<ShapedType>, MeshSharding>>
-trySplitLastAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                             MeshSharding sourceSharding,
-                             MeshSharding targetSharding,
+static std::optional<std::tuple<TypedValue<ShapedType>, MeshShardingAttr>>
+trySplitLastAxisInResharding(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                             MeshShardingAttr sourceSharding,
+                             MeshShardingAttr targetSharding,
                              TypedValue<ShapedType> sourceShard) {
   if (auto detectRes =
           detectSplitLastAxisInResharding(sourceSharding, targetSharding)) {
@@ -200,8 +323,8 @@ trySplitLastAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
 // [[0, 1, 2]] -> [[0, 1]].
 // If detected, returns the corresponding tensor axis mesh axis pair.
 static std::optional<std::tuple<int64_t, MeshAxis>>
-detectUnsplitLastAxisInResharding(MeshSharding sourceSharding,
-                                  MeshSharding targetSharding) {
+detectUnsplitLastAxisInResharding(MeshShardingAttr sourceSharding,
+                                  MeshShardingAttr targetSharding) {
   for (size_t tensorAxis = 0; tensorAxis < sourceSharding.getSplitAxes().size();
        ++tensorAxis) {
     if (targetSharding.getSplitAxes().size() > tensorAxis) {
@@ -228,9 +351,10 @@ detectUnsplitLastAxisInResharding(MeshSharding sourceSharding,
   return std::nullopt;
 }
 
-static MeshSharding targetShardingInUnsplitLastAxis(MLIRContext *ctx,
-                                                    MeshSharding sourceSharding,
-                                                    int64_t splitTensorAxis) {
+static MeshShardingAttr
+targetShardingInUnsplitLastAxis(MLIRContext *ctx,
+                                MeshShardingAttr sourceSharding,
+                                int64_t splitTensorAxis) {
   SmallVector<MeshAxesAttr> targetShardingSplitAxes =
       llvm::to_vector(sourceSharding.getSplitAxes());
   assert(static_cast<int64_t>(targetShardingSplitAxes.size()) >
@@ -241,8 +365,8 @@ static MeshSharding targetShardingInUnsplitLastAxis(MLIRContext *ctx,
   targetSplitAxes.pop_back();
   targetShardingSplitAxes[splitTensorAxis] =
       MeshAxesAttr::get(ctx, targetSplitAxes);
-  return MeshSharding::get(
-      sourceSharding.getMeshAttr(), targetShardingSplitAxes,
+  return MeshShardingAttr::get(
+      ctx, sourceSharding.getCluster(), targetShardingSplitAxes,
       sourceSharding.getPartialAxes(), sourceSharding.getPartialType());
 }
 
@@ -250,21 +374,21 @@ static ShapedType allGatherResultShapeInUnsplitLastAxis(
     ShapedType sourceShape, int64_t splitCount, int64_t splitTensorAxis) {
   SmallVector<int64_t> targetShape = llvm::to_vector(sourceShape.getShape());
   targetShape[splitTensorAxis] =
-      gatherDimension(targetShape[splitTensorAxis], splitCount);
+      unshardDimension(targetShape[splitTensorAxis], splitCount);
   return sourceShape.cloneWith(targetShape, sourceShape.getElementType());
 }
 
-static std::tuple<TypedValue<ShapedType>, MeshSharding>
+static std::tuple<TypedValue<ShapedType>, MeshShardingAttr>
 unsplitLastAxisInResharding(ImplicitLocOpBuilder &builder,
-                            MeshSharding sourceSharding,
+                            MeshShardingAttr sourceSharding,
                             ShapedType sourceUnshardedShape,
-                            TypedValue<ShapedType> sourceShard, MeshOp mesh,
+                            TypedValue<ShapedType> sourceShard, ClusterOp mesh,
                             int64_t splitTensorAxis, MeshAxis splitMeshAxis) {
   MLIRContext *ctx = builder.getContext();
   builder.setInsertionPointAfterValue(sourceShard);
 
-  MeshSharding targetSharding =
-      targetShardingInUnsplitLastAxis(ctx, sourceSharding, splitTensorAxis);
+  MeshShardingAttr targetSharding =
+      targetShardingInUnsplitLastAxis(ctx, sourceSharding, splitMeshAxis);
   ShapedType allGatherResultShape = allGatherResultShapeInUnsplitLastAxis(
       sourceShard.getType(), mesh.getShape()[splitMeshAxis], splitTensorAxis);
   Value allGatherResult = builder.create<AllGatherOp>(
@@ -274,15 +398,17 @@ unsplitLastAxisInResharding(ImplicitLocOpBuilder &builder,
       APInt(64, splitTensorAxis));
   ShapedType targetShape =
       shardShapedType(sourceUnshardedShape, mesh, targetSharding);
-  TypedValue<ShapedType> targetShard = cast<TypedValue<ShapedType>>(
-      builder.create<tensor::CastOp>(targetShape, allGatherResult).getResult());
+  TypedValue<ShapedType> targetShard =
+      builder.create<tensor::CastOp>(targetShape, allGatherResult)
+          .getResult()
+          .cast<TypedValue<ShapedType>>();
   return {targetShard, targetSharding};
 }
 
-static std::optional<std::tuple<TypedValue<ShapedType>, MeshSharding>>
-tryUnsplitLastAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                               MeshSharding sourceSharding,
-                               MeshSharding targetSharding,
+static std::optional<std::tuple<TypedValue<ShapedType>, MeshShardingAttr>>
+tryUnsplitLastAxisInResharding(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                               MeshShardingAttr sourceSharding,
+                               MeshShardingAttr targetSharding,
                                ShapedType sourceUnshardedShape,
                                TypedValue<ShapedType> sourceShard) {
   if (auto detectRes =
@@ -302,8 +428,8 @@ tryUnsplitLastAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
 // If detected, returns the corresponding (source_tensor_axis,
 // target_tensor_axis, mesh_axis) tuple.
 static std::optional<std::tuple<int64_t, int64_t, MeshAxis>>
-detectMoveLastSplitAxisInResharding(MeshSharding sourceSharding,
-                                    MeshSharding targetSharding) {
+detectMoveLastSplitAxisInResharding(MeshShardingAttr sourceSharding,
+                                    MeshShardingAttr targetSharding) {
   for (size_t sourceTensorAxis = 0;
        sourceTensorAxis < sourceSharding.getSplitAxes().size();
        ++sourceTensorAxis) {
@@ -343,10 +469,10 @@ detectMoveLastSplitAxisInResharding(MeshSharding sourceSharding,
   return std::nullopt;
 }
 
-static MeshSharding targetShardingInMoveLastAxis(MLIRContext *ctx,
-                                                 MeshSharding sourceSharding,
-                                                 int64_t sourceTensorAxis,
-                                                 int64_t targetTensorAxis) {
+static MeshShardingAttr
+targetShardingInMoveLastAxis(MLIRContext *ctx, MeshShardingAttr sourceSharding,
+                             int64_t sourceTensorAxis,
+                             int64_t targetTensorAxis) {
   SmallVector<MeshAxesAttr> targetShardingSplitAxes =
       llvm::to_vector(sourceSharding.getSplitAxes());
   while (static_cast<int64_t>(targetShardingSplitAxes.size()) <=
@@ -368,8 +494,8 @@ static MeshSharding targetShardingInMoveLastAxis(MLIRContext *ctx,
   targetShardingSplitAxes[targetTensorAxis] =
       MeshAxesAttr::get(ctx, targetSplitAxes);
 
-  return MeshSharding::get(
-      sourceSharding.getMeshAttr(), targetShardingSplitAxes,
+  return MeshShardingAttr::get(
+      ctx, sourceSharding.getCluster(), targetShardingSplitAxes,
       sourceSharding.getPartialAxes(), sourceSharding.getPartialType());
 }
 
@@ -379,15 +505,15 @@ static ShapedType allToAllResultShapeInMoveLastAxis(ShapedType sourceShape,
                                                     int64_t targetTensorAxis) {
   SmallVector<int64_t> targetShape = llvm::to_vector(sourceShape.getShape());
   targetShape[sourceTensorAxis] =
-      gatherDimension(targetShape[sourceTensorAxis], splitCount);
+      unshardDimension(targetShape[sourceTensorAxis], splitCount);
   targetShape[targetTensorAxis] =
       shardDimension(targetShape[targetTensorAxis], splitCount);
   return sourceShape.cloneWith(targetShape, sourceShape.getElementType());
 }
 
-static std::tuple<TypedValue<ShapedType>, MeshSharding>
-moveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                              MeshSharding sourceSharding,
+static std::tuple<TypedValue<ShapedType>, MeshShardingAttr>
+moveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                              MeshShardingAttr sourceSharding,
                               ShapedType sourceUnshardedShape,
                               TypedValue<ShapedType> sourceShard,
                               int64_t sourceTensorAxis,
@@ -395,7 +521,7 @@ moveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
   MLIRContext *ctx = builder.getContext();
   builder.setInsertionPointAfterValue(sourceShard);
 
-  MeshSharding targetSharding = targetShardingInMoveLastAxis(
+  MeshShardingAttr targetSharding = targetShardingInMoveLastAxis(
       ctx, sourceSharding, sourceTensorAxis, targetTensorAxis);
   ShapedType allToAllResultShape = allToAllResultShapeInMoveLastAxis(
       sourceShard.getType(), mesh.getShape()[meshAxis], sourceTensorAxis,
@@ -407,15 +533,17 @@ moveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
       APInt(64, targetTensorAxis), APInt(64, sourceTensorAxis));
   ShapedType targetShape =
       shardShapedType(sourceUnshardedShape, mesh, targetSharding);
-  TypedValue<ShapedType> targetShard = cast<TypedValue<ShapedType>>(
-      builder.create<tensor::CastOp>(targetShape, allToAllResult).getResult());
+  TypedValue<ShapedType> targetShard =
+      builder.create<tensor::CastOp>(targetShape, allToAllResult)
+          .getResult()
+          .cast<TypedValue<ShapedType>>();
   return {targetShard, targetSharding};
 }
 
-static std::optional<std::tuple<TypedValue<ShapedType>, MeshSharding>>
-tryMoveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                                 MeshSharding sourceSharding,
-                                 MeshSharding targetSharding,
+static std::optional<std::tuple<TypedValue<ShapedType>, MeshShardingAttr>>
+tryMoveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                                 MeshShardingAttr sourceSharding,
+                                 MeshShardingAttr targetSharding,
                                  ShapedType sourceUnshardedShape,
                                  TypedValue<ShapedType> sourceShard) {
   if (auto detectRes =
@@ -433,8 +561,9 @@ tryMoveLastSplitAxisInResharding(ImplicitLocOpBuilder &builder, MeshOp mesh,
 // Currently the sharded tensor axes must be exactly divisible by the single
 // mesh axis size.
 static TypedValue<ShapedType>
-reshardOn1DMesh(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                MeshSharding sourceSharding, MeshSharding targetSharding,
+reshardOn1DMesh(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                MeshShardingAttr sourceSharding,
+                MeshShardingAttr targetSharding,
                 TypedValue<ShapedType> sourceUnshardedValue,
                 TypedValue<ShapedType> sourceShard) {
   assert(sourceShard.getType() ==
@@ -453,34 +582,31 @@ reshardOn1DMesh(ImplicitLocOpBuilder &builder, MeshOp mesh,
   }
 
   TypedValue<ShapedType> targetShard;
-  MeshSharding actualTargetSharding;
-  if (reducedSourceSharding.getStaticHaloSizes().empty() &&
-      targetSharding.getStaticHaloSizes().empty() &&
-      reducedSourceSharding.getStaticShardedDimsSizes().empty() &&
-      targetSharding.getStaticShardedDimsSizes().empty()) {
-    if (auto tryRes = tryMoveLastSplitAxisInResharding(
-            builder, mesh, reducedSourceSharding, targetSharding,
-            sourceUnshardedValue.getType(), reducedSourceShard)) {
-      std::tie(targetShard, actualTargetSharding) = tryRes.value();
-    } else if (auto tryRes = trySplitLastAxisInResharding(
-                   builder, mesh, reducedSourceSharding, targetSharding,
-                   reducedSourceShard)) {
-      std::tie(targetShard, actualTargetSharding) = tryRes.value();
-    } else if (auto tryRes = tryUnsplitLastAxisInResharding(
-                   builder, mesh, reducedSourceSharding, targetSharding,
-                   sourceUnshardedValue.getType(), reducedSourceShard)) {
-      std::tie(targetShard, actualTargetSharding) = tryRes.value();
-    }
+  MeshShardingAttr actualTargetSharding;
+  if (auto tryRes = tryMoveLastSplitAxisInResharding(
+          builder, mesh, reducedSourceSharding, targetSharding,
+          sourceUnshardedValue.getType(), reducedSourceShard)) {
+    std::tie(targetShard, actualTargetSharding) = tryRes.value();
+  } else if (auto tryRes = trySplitLastAxisInResharding(
+                 builder, mesh, reducedSourceSharding, targetSharding,
+                 reducedSourceShard)) {
+    std::tie(targetShard, actualTargetSharding) = tryRes.value();
+  } else if (auto tryRes = tryUnsplitLastAxisInResharding(
+                 builder, mesh, reducedSourceSharding, targetSharding,
+                 sourceUnshardedValue.getType(), reducedSourceShard)) {
+    std::tie(targetShard, actualTargetSharding) = tryRes.value();
+  } else {
+    assert(false && "Did not find any pattern to apply.");
   }
-  assert(targetShard && "Did not find any pattern to apply.");
+
   assert(actualTargetSharding == targetSharding);
   assert(targetShard.getType() == targetShardType);
   return targetShard;
 }
 
-TypedValue<ShapedType> reshard(ImplicitLocOpBuilder &builder, MeshOp mesh,
-                               MeshSharding sourceSharding,
-                               MeshSharding targetSharding,
+TypedValue<ShapedType> reshard(ImplicitLocOpBuilder &builder, ClusterOp mesh,
+                               MeshShardingAttr sourceSharding,
+                               MeshShardingAttr targetSharding,
                                TypedValue<ShapedType> sourceUnshardedValue,
                                TypedValue<ShapedType> sourceShard) {
   // Resort to handling only 1D meshes since the general case is complicated if
@@ -490,275 +616,22 @@ TypedValue<ShapedType> reshard(ImplicitLocOpBuilder &builder, MeshOp mesh,
                          sourceUnshardedValue, sourceShard);
 }
 
-TypedValue<ShapedType> reshard(OpBuilder &builder, MeshOp mesh, ShardOp source,
-                               ShardOp target,
+TypedValue<ShapedType> reshard(OpBuilder &builder, ClusterOp mesh,
+                               ShardOp source, ShardOp target,
                                TypedValue<ShapedType> sourceShardValue) {
-  assert(source.getResult() == target.getSrc());
-  auto sourceSharding = source.getSharding();
-  auto targetSharding = target.getSharding();
+  assert(!source.getAnnotateForUsers());
+  assert(target.getAnnotateForUsers());
+  assert(source.getResult() == target.getOperand());
   ImplicitLocOpBuilder implicitLocOpBuilder(target->getLoc(), builder);
-  return reshard(implicitLocOpBuilder, mesh, sourceSharding, targetSharding,
-                 cast<TypedValue<ShapedType>>(source.getSrc()),
-                 sourceShardValue);
-}
-
-TypedValue<ShapedType> reshard(OpBuilder &builder, ShardOp source,
-                               ShardOp target,
-                               TypedValue<ShapedType> sourceShardValue,
-                               SymbolTableCollection &symbolTableCollection) {
-  MeshOp srcMesh = getMesh(source, symbolTableCollection);
-  assert(srcMesh && srcMesh == getMesh(target, symbolTableCollection));
-  return reshard(builder, srcMesh, source, target, sourceShardValue);
+  return reshard(
+      implicitLocOpBuilder, mesh, source.getShard(), target.getShard(),
+      source.getSrc().cast<TypedValue<ShapedType>>(), sourceShardValue);
 }
 
 void reshardingRegisterDependentDialects(DialectRegistry &registry) {
-  registry.insert<mesh::MeshDialect, tensor::TensorDialect>();
+  registry.insert<arith::ArithDialect, mesh::MeshDialect, tensor::TensorDialect,
+                  cf::ControlFlowDialect>();
 }
 
-#define GEN_PASS_DEF_SPMDIZATION
-#include "mlir/Dialect/Mesh/Transforms/Passes.h.inc"
-
-using UnshardedToShardedValueMap = DenseMap<Value, Value>;
-
-// Get the types of block arguments for an spmdized block.
-// Reads the sharding annotations of the arguments to deduce the sharded types.
-// Types that are not ranked tensors are left unchanged.
-SmallVector<Type>
-shardedBlockArgumentTypes(Block &block,
-                          SymbolTableCollection &symbolTableCollection) {
-  SmallVector<Type> res;
-  llvm::transform(
-      block.getArguments(), std::back_inserter(res),
-      [&symbolTableCollection](BlockArgument arg) {
-        auto rankedTensorArg = dyn_cast<TypedValue<RankedTensorType>>(arg);
-        if (!rankedTensorArg) {
-          return arg.getType();
-        }
-
-        assert(rankedTensorArg.hasOneUse());
-        Operation *useOp = *rankedTensorArg.getUsers().begin();
-        ShardOp shardOp = llvm::dyn_cast<ShardOp>(useOp);
-        assert(shardOp);
-        MeshOp mesh = getMesh(shardOp, symbolTableCollection);
-        return cast<Type>(shardShapedType(rankedTensorArg.getType(), mesh,
-                                          shardOp.getSharding()));
-      });
-  return res;
-}
-
-void spmdizeTriviallyShardableOperation(Operation &op,
-                                        ArrayRef<Value> spmdizedOperands,
-                                        ArrayRef<MeshSharding> operandShardings,
-                                        ArrayRef<MeshSharding> resultShardings,
-                                        IRMapping &spmdizationMap,
-                                        SymbolTableCollection &symbolTable,
-                                        OpBuilder &builder);
-
-static LogicalResult spmdizeOperation(
-    Operation &op, ArrayRef<Value> spmdizedOperands,
-    ArrayRef<MeshSharding> operandShardings,
-    ArrayRef<MeshSharding> resultShardings, IRMapping &spmdizationMap,
-    SymbolTableCollection &symbolTableCollection, OpBuilder &builder) {
-  ShardingInterface shardingInterface = llvm::dyn_cast<ShardingInterface>(op);
-  if (!shardingInterface) {
-    // If there is no sharding interface we are conservative and assume that
-    // the op should be fully replicated no all devices.
-    spmdizeFullyReplicatedOperation(op, spmdizedOperands, operandShardings,
-                                    resultShardings, spmdizationMap,
-                                    symbolTableCollection, builder);
-  } else {
-    if (failed(shardingInterface.spmdize(spmdizedOperands, operandShardings,
-                                         resultShardings, spmdizationMap,
-                                         symbolTableCollection, builder))) {
-      return failure();
-    }
-  }
-
-  assert(llvm::all_of(op.getResults(), [&spmdizationMap](OpResult result) {
-    return spmdizationMap.contains(result);
-  }));
-
-  return success();
-}
-
-// Retrieve the sharding annotations for the operands of the given operation.
-// If the type is not a ranked tensor it is not require to have an annotation.
-static std::vector<MeshSharding> getOperandShardings(Operation &op) {
-  std::vector<MeshSharding> res;
-  res.reserve(op.getNumOperands());
-  llvm::transform(op.getOperands(), std::back_inserter(res), [](Value operand) {
-    TypedValue<RankedTensorType> rankedTensor =
-        dyn_cast<TypedValue<RankedTensorType>>(operand);
-    if (!rankedTensor) {
-      return MeshSharding();
-    }
-
-    Operation *definingOp = operand.getDefiningOp();
-    assert(definingOp);
-    ShardOp shardOp = llvm::cast<ShardOp>(definingOp);
-    return MeshSharding(shardOp.getSharding());
-  });
-  return res;
-}
-
-// Retrieve the sharding annotations for the results of the given operation.
-// If the type is not a ranked tensor it is not require to have an annotation.
-static std::vector<MeshSharding> getResultShardings(Operation &op) {
-  std::vector<MeshSharding> res;
-  res.reserve(op.getNumResults());
-  llvm::transform(op.getResults(), std::back_inserter(res),
-                  [](OpResult result) {
-                    TypedValue<RankedTensorType> rankedTensor =
-                        dyn_cast<TypedValue<RankedTensorType>>(result);
-                    if (!rankedTensor) {
-                      return MeshSharding();
-                    }
-
-                    assert(result.hasOneUse());
-                    Operation *userOp = *result.getUsers().begin();
-                    ShardOp shardOp = llvm::cast<ShardOp>(userOp);
-                    return MeshSharding(shardOp.getSharding());
-                  });
-  return res;
-}
-
-static LogicalResult
-spmdizeOperation(ShardOp shardOp, IRMapping &spmdizationMap,
-                 SymbolTableCollection &symbolTableCollection,
-                 OpBuilder &builder) {
-  Value targetSpmdValue;
-
-  // Check if 2 shard ops are chained. If not there is no need for resharding
-  // as the source and target shared the same sharding.
-  ShardOp srcShardOp =
-      dyn_cast_or_null<ShardOp>(shardOp.getSrc().getDefiningOp());
-  if (!srcShardOp) {
-    targetSpmdValue = spmdizationMap.lookup(shardOp.getSrc());
-  } else {
-    // Insert resharding.
-    TypedValue<ShapedType> srcSpmdValue = cast<TypedValue<ShapedType>>(
-        spmdizationMap.lookup(srcShardOp.getSrc()));
-    targetSpmdValue = reshard(builder, srcShardOp, shardOp, srcSpmdValue,
-                              symbolTableCollection);
-  }
-
-  assert(!spmdizationMap.contains(shardOp.getResult()));
-  spmdizationMap.map(shardOp.getResult(), targetSpmdValue);
-  return success();
-}
-
-static LogicalResult
-spmdizeOperation(Operation &op, IRMapping &spmdizationMap,
-                 SymbolTableCollection &symbolTableCollection,
-                 OpBuilder &builder) {
-  if (isa<ShardingOp>(op)) {
-    return success();
-  }
-
-  ShardOp shardOp = llvm::dyn_cast<ShardOp>(op);
-  if (shardOp) {
-    return spmdizeOperation(shardOp, spmdizationMap, symbolTableCollection,
-                            builder);
-  }
-
-  SmallVector<Value> spmdizedOperands;
-  llvm::transform(op.getOperands(), std::back_inserter(spmdizedOperands),
-                  [&spmdizationMap](Value operand) {
-                    assert(spmdizationMap.contains(operand));
-                    return spmdizationMap.lookup(operand);
-                  });
-  return spmdizeOperation(op, spmdizedOperands, getOperandShardings(op),
-                          getResultShardings(op), spmdizationMap,
-                          symbolTableCollection, builder);
-}
-
-static LogicalResult spmdizeBlock(Block &block, IRMapping &spmdizationMap,
-                                  SymbolTableCollection &symbolTableCollection,
-                                  OpBuilder &builder) {
-  SmallVector<Location> argLocations;
-  llvm::transform(block.getArguments(), std::back_inserter(argLocations),
-                  [](BlockArgument arg) { return arg.getLoc(); });
-  Block *newBlock = builder.createBlock(
-      block.getParent(), {},
-      shardedBlockArgumentTypes(block, symbolTableCollection), argLocations);
-  for (auto [unshardedBlockArg, spmdizedBlockArg] :
-       llvm::zip(block.getArguments(), newBlock->getArguments())) {
-    spmdizationMap.map(unshardedBlockArg, spmdizedBlockArg);
-  }
-
-  OpBuilder::InsertionGuard insertionGuard(builder);
-  builder.setInsertionPointToEnd(newBlock);
-  for (Operation &op : block.getOperations()) {
-    if (failed(spmdizeOperation(op, spmdizationMap, symbolTableCollection,
-                                builder))) {
-      return failure();
-    }
-  }
-
-  return success();
-}
-
-static LogicalResult
-spmdizeFuncOp(FunctionOpInterface op, IRMapping &spmdizationMap,
-              SymbolTableCollection &symbolTableCollection) {
-  OpBuilder builder(op.getFunctionBody());
-
-  // Snapshot the original blocks to not mess up the iteration when adding new
-  // blocks.
-  SmallVector<Block *> originalBlocks;
-  llvm::transform(op.getBlocks(), std::back_inserter(originalBlocks),
-                  [](Block &b) { return &b; });
-
-  for (Block *block : originalBlocks) {
-    if (failed(spmdizeBlock(*block, spmdizationMap, symbolTableCollection,
-                            builder))) {
-      return failure();
-    }
-  }
-
-  for (Block *block : originalBlocks) {
-    block->erase();
-  }
-
-  // Find a return op and change the function results signature to its operands
-  // signature.
-  Operation *returnOp = nullptr;
-  for (Block &block : op.getFunctionBody()) {
-    if (block.empty()) {
-      continue;
-    }
-
-    if (block.back().hasTrait<OpTrait::ReturnLike>()) {
-      returnOp = &block.back();
-      break;
-    }
-  }
-  assert(returnOp);
-  op.setType(FunctionType::get(op->getContext(),
-                               op.getFunctionBody().front().getArgumentTypes(),
-                               returnOp->getOperandTypes()));
-
-  return success();
-}
-
-namespace {
-
-struct Spmdization : public impl::SpmdizationBase<Spmdization> {
-  void runOnOperation() override {
-    IRMapping spmdizationMap;
-    SymbolTableCollection symbolTableCollection;
-    if (failed(spmdizeFuncOp(getOperation(), spmdizationMap,
-                             symbolTableCollection))) {
-      return signalPassFailure();
-    }
-  }
-
-  void getDependentDialects(DialectRegistry &registry) const override {
-    reshardingRegisterDependentDialects(registry);
-    registry.insert<mesh::MeshDialect>();
-  }
-};
-
-} // namespace
-
-} // namespace mlir::mesh
+} // namespace mesh
+} // namespace mlir

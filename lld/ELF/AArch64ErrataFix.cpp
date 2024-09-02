@@ -413,12 +413,12 @@ void Patch843419Section::writeTo(uint8_t *buf) {
   write32le(buf, read32le(patchee->content().begin() + patcheeOffset));
 
   // Apply any relocation transferred from the original patchee section.
-  ctx.target->relocateAlloc(*this, buf);
+  target->relocateAlloc(*this, buf);
 
   // Return address is the next instruction after the one we have just copied.
   uint64_t s = getLDSTAddr() + 4;
   uint64_t p = patchSym->getVA() + 4;
-  ctx.target->relocateNoSym(buf + 4, R_AARCH64_JUMP26, s - p);
+  target->relocateNoSym(buf + 4, R_AARCH64_JUMP26, s - p);
 }
 
 void AArch64Err843419Patcher::init() {
@@ -483,8 +483,7 @@ void AArch64Err843419Patcher::insertPatches(
     InputSectionDescription &isd, std::vector<Patch843419Section *> &patches) {
   uint64_t isecLimit;
   uint64_t prevIsecLimit = isd.sections.front()->outSecOff;
-  uint64_t patchUpperBound =
-      prevIsecLimit + ctx.target->getThunkSectionSpacing();
+  uint64_t patchUpperBound = prevIsecLimit + target->getThunkSectionSpacing();
   uint64_t outSecAddr = isd.sections.front()->getParent()->addr;
 
   // Set the outSecOff of patches to the place where we want to insert them.
@@ -501,7 +500,7 @@ void AArch64Err843419Patcher::insertPatches(
         (*patchIt)->outSecOff = prevIsecLimit;
         ++patchIt;
       }
-      patchUpperBound = prevIsecLimit + ctx.target->getThunkSectionSpacing();
+      patchUpperBound = prevIsecLimit + target->getThunkSectionSpacing();
     }
     prevIsecLimit = isecLimit;
   }
@@ -626,7 +625,7 @@ bool AArch64Err843419Patcher::createFixes() {
     init();
 
   bool addressesChanged = false;
-  for (OutputSection *os : ctx.outputSections) {
+  for (OutputSection *os : outputSections) {
     if (!(os->flags & SHF_ALLOC) || !(os->flags & SHF_EXECINSTR))
       continue;
     for (SectionCommand *cmd : os->commands)

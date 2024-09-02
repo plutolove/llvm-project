@@ -123,7 +123,6 @@ public:
     eCore_arm_armv6,
     eCore_arm_armv6m,
     eCore_arm_armv7,
-    eCore_arm_armv7a,
     eCore_arm_armv7l,
     eCore_arm_armv7f,
     eCore_arm_armv7s,
@@ -146,7 +145,6 @@ public:
     eCore_thumbv7em,
     eCore_arm_arm64,
     eCore_arm_armv8,
-    eCore_arm_armv8a,
     eCore_arm_armv8l,
     eCore_arm_arm64e,
     eCore_arm_arm64_32,
@@ -506,6 +504,11 @@ public:
   }
 
   bool IsFullySpecifiedTriple() const;
+
+  void PiecewiseTripleCompare(const ArchSpec &other, bool &arch_different,
+                              bool &vendor_different, bool &os_different,
+                              bool &os_version_different,
+                              bool &env_different) const;
 
   /// Detect whether this architecture uses thumb code exclusively
   ///

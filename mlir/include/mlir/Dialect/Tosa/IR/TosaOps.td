@@ -49,7 +49,6 @@ def Tosa_ArgMaxOp : Tosa_InferShapedTypeOp<"argmax"> {
     Tosa_Tensor: $output
   );
 
-  let hasFolder = 1;
   let hasVerifier = 1;
 }
 
@@ -605,9 +604,9 @@ def Tosa_BitwiseXorOp : Tosa_ElementwiseOp<"bitwise_xor", [
 }
 
 //===----------------------------------------------------------------------===//
-// Operator: int_div
+// Operator: div
 //===----------------------------------------------------------------------===//
-def Tosa_IntDivOp : Tosa_ElementwiseOp<"int_div", [SameOperandsAndResultElementType]> {
+def Tosa_DivOp : Tosa_ElementwiseOp<"div", [SameOperandsAndResultElementType]> {
   let summary = "Integer divide operator";
 
   let description = [{
@@ -897,8 +896,6 @@ def Tosa_TableOp : Tosa_InferShapedTypeOp<"table"> {
   let assemblyFormat = [{
     $input `,` $table attr-dict `:` `(` type($input) `,` type($table) `)` `->` type($output)
   }];
-
-  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
@@ -989,26 +986,6 @@ def Tosa_ClzOp : Tosa_ElementwiseOp<"clz", [SameOperandsAndResultElementType]> {
 
   let results = (outs
     Tosa_Tensor:$output
-  );
-}
-
-//===----------------------------------------------------------------------===//
-// Operator: cos
-//===----------------------------------------------------------------------===//
-def Tosa_CosOp : Tosa_ElementwiseOp<"cos",
-    [SameOperandsAndResultElementType]> {
-  let summary = "Elementwise cos op";
-
-  let description = [{
-    Elementwise cosine operation for values given in radians.
-  }];
-
-  let arguments = (ins
-    Tosa_FloatTensor:$input
-  );
-
-  let results = (outs
-    Tosa_FloatTensor:$output
   );
 }
 
@@ -1168,26 +1145,6 @@ def Tosa_RsqrtOp : Tosa_ElementwiseOp<"rsqrt",
 
   let results = (outs
     Tosa_Tensor:$output
-  );
-}
-
-//===----------------------------------------------------------------------===//
-// Operator: sin
-//===----------------------------------------------------------------------===//
-def Tosa_SinOp : Tosa_ElementwiseOp<"sin",
-    [SameOperandsAndResultElementType]> {
-  let summary = "Elementwise sin op";
-
-  let description = [{
-    Elementwise sine operation for values given in radians.
-  }];
-
-  let arguments = (ins
-    Tosa_FloatTensor:$input
-  );
-
-  let results = (outs
-    Tosa_FloatTensor:$output
   );
 }
 
@@ -1504,7 +1461,7 @@ def Tosa_ReduceSumOp : Tosa_InferTensorTypeOp<"reduce_sum"> {
 
   let hasFolder = 1;
   let hasVerifier = 1;
-
+  
   let extraClassDeclaration = [{
     /// Returns true when two result types are compatible for this op;
     /// Method used by InferTypeOpInterface.
@@ -1654,7 +1611,7 @@ def Tosa_ReverseOp: Tosa_Op<"reverse", [
 
   let hasFolder = 1;
   let hasVerifier = 1;
-
+  
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
 }
 
@@ -1710,8 +1667,7 @@ def Tosa_TileOp : Tosa_InferShapedTypeOp<"tile"> {
 //===----------------------------------------------------------------------===//
 // Operator: transpose
 //===----------------------------------------------------------------------===//
-def Tosa_TransposeOp : Tosa_InferShapedTypeOp<"transpose",
-                [DeclareOpInterfaceMethods<ReifyRankedShapedTypeOpInterface>]> {
+def Tosa_TransposeOp : Tosa_InferShapedTypeOp<"transpose"> {
   let summary = "Transpose operator";
 
   let description = [{
@@ -1838,9 +1794,9 @@ def Tosa_CastOp: Tosa_Op<"cast", [Pure,
 
     | Mode                     | Input   | Output  |
     |--------------------------|---------|---------|
-    | signed 8 to bool         | int8    | Boolean |
-    | signed 16 to bool        | int16   | Boolean |
-    | signed 32 to bool        | int32   | Boolean |
+    | signed 8 to bool         | int8    | Boolean | 
+    | signed 16 to bool        | int16   | Boolean | 
+    | signed 32 to bool        | int32   | Boolean | 
     | bool to 8                | Boolean | int8    |
     | bool to 16               | Boolean | int16   |
     | bool to 32               | Boolean | int32   |
@@ -1854,16 +1810,16 @@ def Tosa_CastOp: Tosa_Op<"cast", [Pure,
     | float to signed 16       | float   | int16   |
     | signed 8 to float        | int8    | float   |
     | signed 16 to float       | int16   | float   |
-    | float 32 to float 64     | float32 | float64 |
-    | float 64 to float 32     | float64 | float32 |
+    | float 32 to float 64     | float32 | float64 | 
+    | float 64 to float 32     | float64 | float32 | 
   }];
 
   let arguments = (ins
-    Tosa_Tensor:$input
+    Tosa_Tensor_Plus_F64:$input
   );
 
   let results = (outs
-    Tosa_Tensor:$output
+    Tosa_Tensor_Plus_F64:$output
   );
 
   let assemblyFormat = "operands attr-dict `:` functional-type(operands, results)";
@@ -1946,7 +1902,7 @@ def Tosa_ConstOp : Tosa_Op<"const", [ConstantLike, Pure,
   );
 
   let results = (outs
-    TensorOf<[AnyTypeOf<[Tosa_AnyNumber]>]>:$output
+    TensorOf<[AnyTypeOf<[Tosa_AnyNumber_Plus_F64, Tosa_Int4]>]>:$output
   );
 
   let hasFolder = 1;

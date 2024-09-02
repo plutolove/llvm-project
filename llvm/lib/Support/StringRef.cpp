@@ -328,7 +328,7 @@ void StringRef::split(SmallVectorImpl<StringRef> &A,
       A.push_back(S.slice(0, Idx));
 
     // Jump forward.
-    S = S.substr(Idx + Separator.size());
+    S = S.slice(Idx + Separator.size(), npos);
   }
 
   // Push the tail.
@@ -354,7 +354,7 @@ void StringRef::split(SmallVectorImpl<StringRef> &A, char Separator,
       A.push_back(S.slice(0, Idx));
 
     // Jump forward.
-    S = S.substr(Idx + 1);
+    S = S.slice(Idx + 1, npos);
   }
 
   // Push the tail.
@@ -458,7 +458,7 @@ bool llvm::consumeSignedInteger(StringRef &Str, unsigned Radix,
   unsigned long long ULLVal;
 
   // Handle positive strings first.
-  if (!Str.starts_with("-")) {
+  if (Str.empty() || Str.front() != '-') {
     if (consumeUnsignedInteger(Str, Radix, ULLVal) ||
         // Check for value so large it overflows a signed value.
         (long long)ULLVal < 0)

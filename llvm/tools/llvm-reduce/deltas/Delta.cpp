@@ -22,7 +22,6 @@
 #include "llvm/Bitcode/BitcodeReader.h"
 #include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/CodeGen/MachineFunction.h"
-#include "llvm/Config/llvm-config.h" // for LLVM_ENABLE_THREADS
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/MC/TargetRegistry.h"
@@ -220,10 +219,10 @@ void llvm::runDeltaPass(TestRunner &Test, ReductionFunc ExtractChunksFromModule,
   }
 
   std::atomic<bool> AnyReduced;
-  std::unique_ptr<ThreadPoolInterface> ChunkThreadPoolPtr;
+  std::unique_ptr<ThreadPool> ChunkThreadPoolPtr;
   if (NumJobs > 1)
     ChunkThreadPoolPtr =
-        std::make_unique<DefaultThreadPool>(hardware_concurrency(NumJobs));
+        std::make_unique<ThreadPool>(hardware_concurrency(NumJobs));
 
   bool FoundAtLeastOneNewUninterestingChunkWithCurrentGranularity;
   do {
@@ -252,7 +251,7 @@ void llvm::runDeltaPass(TestRunner &Test, ReductionFunc ExtractChunksFromModule,
         unsigned NumInitialTasks = std::min(WorkLeft, unsigned(NumJobs));
         unsigned NumChunksProcessed = 0;
 
-        ThreadPoolInterface &ChunkThreadPool = *ChunkThreadPoolPtr;
+        ThreadPool &ChunkThreadPool = *ChunkThreadPoolPtr;
         assert(TaskQueue.empty());
 
         AnyReduced = false;

@@ -56,9 +56,6 @@ namespace detail {
 struct BitmaskEnumStorage;
 } // namespace detail
 
-/// Predefined constant_mask kinds.
-enum class ConstantMaskKind { AllFalse = 0, AllTrue };
-
 /// Default callback to build a region with a 'vector.yield' terminator with no
 /// arguments.
 void buildTerminatedBody(OpBuilder &builder, Location loc);
@@ -71,14 +68,9 @@ enum class BroadcastableToResult {
   DimensionMismatch = 2,
   SourceTypeNotAVector = 3
 };
-
-struct VectorDim {
-  int64_t dim;
-  bool isScalable;
-};
 BroadcastableToResult
 isBroadcastableTo(Type srcType, VectorType dstVectorType,
-                  std::pair<VectorDim, VectorDim> *mismatchingDims = nullptr);
+                  std::pair<int, int> *mismatchingDims = nullptr);
 
 /// Collect a set of vector-to-vector canonicalization patterns.
 void populateVectorToVectorCanonicalizationPatterns(RewritePatternSet &patterns,
@@ -87,10 +79,6 @@ void populateVectorToVectorCanonicalizationPatterns(RewritePatternSet &patterns,
 /// Collect a set of patterns that fold arithmetic extension on floating point
 /// into vector contract for the backends with native support.
 void populateFoldArithExtensionPatterns(RewritePatternSet &patterns);
-
-/// Collect a set of patterns that fold elementwise op on vectors to the vector
-/// dialect.
-void populateElementwiseToVectorOpsPatterns(RewritePatternSet &patterns);
 
 /// Returns the integer type required for subscripts in the vector dialect.
 IntegerType getVectorSubscriptType(Builder &builder);
@@ -170,11 +158,6 @@ SmallVector<Value> getAsValues(OpBuilder &builder, Location loc,
 /// constant operations.
 SmallVector<arith::ConstantIndexOp>
 getAsConstantIndexOps(ArrayRef<Value> values);
-
-/// If `value` is a constant multiple of `vector.vscale` (e.g. `%cst *
-/// vector.vscale`), return the multiplier (`%cst`). Otherwise, return
-/// `std::nullopt`.
-std::optional<int64_t> getConstantVscaleMultiplier(Value value);
 
 //===----------------------------------------------------------------------===//
 // Vector Masking Utilities

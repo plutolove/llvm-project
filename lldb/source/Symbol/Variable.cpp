@@ -27,8 +27,6 @@
 #include "lldb/Target/StackFrame.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Target/Thread.h"
-#include "lldb/Utility/LLDBLog.h"
-#include "lldb/Utility/Log.h"
 #include "lldb/Utility/RegularExpression.h"
 #include "lldb/Utility/Stream.h"
 
@@ -328,7 +326,7 @@ Status Variable::GetValuesForVariableExpressionPath(
     ValueObjectList &valobj_list) {
   Status error;
   if (!callback || variable_expr_path.empty()) {
-    error = Status::FromErrorString("unknown error");
+    error.SetErrorString("unknown error");
     return error;
   }
 
@@ -338,7 +336,7 @@ Status Variable::GetValuesForVariableExpressionPath(
         variable_expr_path.drop_front(), scope, callback, baton, variable_list,
         valobj_list);
     if (error.Fail()) {
-      error = Status::FromErrorString("unknown error");
+      error.SetErrorString("unknown error");
       return error;
     }
     for (uint32_t i = 0; i < valobj_list.GetSize();) {
@@ -372,7 +370,7 @@ Status Variable::GetValuesForVariableExpressionPath(
         }
       }
     } else {
-      error = Status::FromErrorString("unknown error");
+      error.SetErrorString("unknown error");
     }
     return error;
   } break;
@@ -383,13 +381,13 @@ Status Variable::GetValuesForVariableExpressionPath(
     llvm::SmallVector<llvm::StringRef, 2> matches;
     variable_list.Clear();
     if (!g_regex.Execute(variable_expr_path, &matches)) {
-      error = Status::FromErrorStringWithFormatv(
+      error.SetErrorStringWithFormatv(
           "unable to extract a variable name from '{0}'", variable_expr_path);
       return error;
     }
     std::string variable_name = matches[1].str();
     if (!callback(baton, variable_name.c_str(), variable_list)) {
-      error = Status::FromErrorString("unknown error");
+      error.SetErrorString("unknown error");
       return error;
     }
     uint32_t i = 0;
@@ -413,7 +411,7 @@ Status Variable::GetValuesForVariableExpressionPath(
         valobj_sp = variable_valobj_sp->GetValueForExpressionPath(
             variable_sub_expr_path);
         if (!valobj_sp) {
-          error = Status::FromErrorStringWithFormatv(
+          error.SetErrorStringWithFormatv(
               "invalid expression path '{0}' for variable '{1}'",
               variable_sub_expr_path, var_sp->GetName().GetCString());
           variable_list.RemoveVariableAtIndex(i);
@@ -434,7 +432,7 @@ Status Variable::GetValuesForVariableExpressionPath(
     }
   } break;
   }
-  error = Status::FromErrorString("unknown error");
+  error.SetErrorString("unknown error");
   return error;
 }
 
@@ -511,17 +509,15 @@ static void PrivateAutoCompleteMembers(
       CompilerType member_compiler_type = compiler_type.GetFieldAtIndex(
           i, member_name, nullptr, nullptr, nullptr);
 
-      if (partial_member_name.empty()) {
-        request.AddCompletion((prefix_path + member_name).str());
-      } else if (llvm::StringRef(member_name)
-                     .starts_with(partial_member_name)) {
+      if (partial_member_name.empty() ||
+          llvm::StringRef(member_name).starts_with(partial_member_name)) {
         if (member_name == partial_member_name) {
           PrivateAutoComplete(
               frame, partial_path,
               prefix_path + member_name, // Anything that has been resolved
                                          // already will be in here
               member_compiler_type.GetCanonicalType(), request);
-        } else if (partial_path.empty()) {
+        } else {
           request.AddCompletion((prefix_path + member_name).str());
         }
       }
@@ -570,9 +566,7 @@ static void PrivateAutoComplete(
       case eTypeClassObjCObjectPointer:
       case eTypeClassPointer: {
         bool omit_empty_base_classes = true;
-        if (llvm::expectedToStdOptional(
-                compiler_type.GetNumChildren(omit_empty_base_classes, nullptr))
-                .value_or(0))
+        if (compiler_type.GetNumChildren(omit_empty_base_classes, nullptr) > 0)
           request.AddCompletion((prefix_path + "->").str());
         else {
           request.AddCompletion(prefix_path.str());

@@ -140,7 +140,7 @@ ConnectionFileDescriptor::Connect(llvm::StringRef path,
 
   if (path.empty()) {
     if (error_ptr)
-      *error_ptr = Status::FromErrorString("invalid connect arguments");
+      error_ptr->SetErrorString("invalid connect arguments");
     return eConnectionStatusError;
   }
 
@@ -177,8 +177,8 @@ ConnectionFileDescriptor::Connect(llvm::StringRef path,
   }
 
   if (error_ptr)
-    *error_ptr = Status::FromErrorStringWithFormat(
-        "unsupported connection URL: '%s'", path.str().c_str());
+    error_ptr->SetErrorStringWithFormat("unsupported connection URL: '%s'",
+                                        path.str().c_str());
   return eConnectionStatusError;
 }
 
@@ -256,8 +256,7 @@ size_t ConnectionFileDescriptor::Read(void *dst, size_t dst_len,
               "connection lock.",
               static_cast<void *>(this));
     if (error_ptr)
-      *error_ptr = Status::FromErrorString(
-          "failed to get the connection lock for read.");
+      error_ptr->SetErrorString("failed to get the connection lock for read.");
 
     status = eConnectionStatusTimedOut;
     return 0;
@@ -265,7 +264,7 @@ size_t ConnectionFileDescriptor::Read(void *dst, size_t dst_len,
 
   if (m_shutting_down) {
     if (error_ptr)
-      *error_ptr = Status::FromErrorString("shutting down");
+      error_ptr->SetErrorString("shutting down");
     status = eConnectionStatusError;
     return 0;
   }
@@ -365,14 +364,14 @@ size_t ConnectionFileDescriptor::Write(const void *src, size_t src_len,
 
   if (!IsConnected()) {
     if (error_ptr)
-      *error_ptr = Status::FromErrorString("not connected");
+      error_ptr->SetErrorString("not connected");
     status = eConnectionStatusNoConnection;
     return 0;
   }
 
   if (m_shutting_down) {
     if (error_ptr)
-      *error_ptr = Status::FromErrorString("shutting down");
+      error_ptr->SetErrorString("shutting down");
     status = eConnectionStatusError;
     return 0;
   }
@@ -529,7 +528,7 @@ ConnectionFileDescriptor::BytesAvailable(const Timeout<std::micro> &timeout,
   }
 
   if (error_ptr)
-    *error_ptr = Status::FromErrorString("not connected");
+    error_ptr->SetErrorString("not connected");
   return eConnectionStatusLostConnection;
 }
 
@@ -680,8 +679,8 @@ ConnectionFileDescriptor::ConnectFD(llvm::StringRef s,
     int flags = ::fcntl(fd, F_GETFL, 0);
     if (flags == -1 || errno == EBADF) {
       if (error_ptr)
-        *error_ptr = Status::FromErrorStringWithFormat(
-            "stale file descriptor: %s", s.str().c_str());
+        error_ptr->SetErrorStringWithFormat("stale file descriptor: %s",
+                                            s.str().c_str());
       m_io_sp.reset();
       return eConnectionStatusError;
     } else {
@@ -711,8 +710,8 @@ ConnectionFileDescriptor::ConnectFD(llvm::StringRef s,
   }
 
   if (error_ptr)
-    *error_ptr = Status::FromErrorStringWithFormat(
-        "invalid file descriptor: \"%s\"", s.str().c_str());
+    error_ptr->SetErrorStringWithFormat("invalid file descriptor: \"%s\"",
+                                        s.str().c_str());
   m_io_sp.reset();
   return eConnectionStatusError;
 #endif // LLDB_ENABLE_POSIX
@@ -728,7 +727,7 @@ ConnectionStatus ConnectionFileDescriptor::ConnectFile(
   int fd = FileSystem::Instance().Open(addr_str.c_str(), O_RDWR);
   if (fd == -1) {
     if (error_ptr)
-      *error_ptr = Status::FromErrno();
+      error_ptr->SetErrorToErrno();
     return eConnectionStatusError;
   }
 
@@ -778,7 +777,7 @@ ConnectionStatus ConnectionFileDescriptor::ConnectSerialPort(
   int fd = FileSystem::Instance().Open(path.str().c_str(), O_RDWR);
   if (fd == -1) {
     if (error_ptr)
-      *error_ptr = Status::FromErrno();
+      error_ptr->SetErrorToErrno();
     return eConnectionStatusError;
   }
 

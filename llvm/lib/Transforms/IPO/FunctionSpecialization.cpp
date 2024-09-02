@@ -481,6 +481,11 @@ Constant *FunctionSpecializer::getPromotableAlloca(AllocaInst *Alloca,
     // the usage in the CallInst, which is what we check here.
     if (User == Call)
       continue;
+    if (auto *Bitcast = dyn_cast<BitCastInst>(User)) {
+      if (!Bitcast->hasOneUse() || *Bitcast->user_begin() != Call)
+        return nullptr;
+      continue;
+    }
 
     if (auto *Store = dyn_cast<StoreInst>(User)) {
       // This is a duplicate store, bail out.
@@ -684,9 +689,7 @@ bool FunctionSpecializer::run() {
   // specialization budget, which is derived from maximum number of
   // specializations per specialization candidate function.
   auto CompareScore = [&AllSpecs](unsigned I, unsigned J) {
-    if (AllSpecs[I].Score != AllSpecs[J].Score)
-      return AllSpecs[I].Score > AllSpecs[J].Score;
-    return I > J;
+    return AllSpecs[I].Score > AllSpecs[J].Score;
   };
   const unsigned NSpecs =
       std::min(NumCandidates * MaxClones, unsigned(AllSpecs.size()));

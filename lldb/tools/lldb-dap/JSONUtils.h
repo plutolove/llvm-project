@@ -9,7 +9,6 @@
 #ifndef LLDB_TOOLS_LLDB_DAP_JSONUTILS_H
 #define LLDB_TOOLS_LLDB_DAP_JSONUTILS_H
 
-#include "BreakpointBase.h"
 #include "DAPForward.h"
 #include "lldb/API/SBModule.h"
 #include "llvm/ADT/StringRef.h"
@@ -192,7 +191,7 @@ void FillResponse(const llvm::json::Object &request,
 ///     provided by the setBreakpoints request are returned to the IDE as a
 ///     fallback.
 void AppendBreakpoint(
-    BreakpointBase *bp, llvm::json::Array &breakpoints,
+    lldb::SBBreakpoint &bp, llvm::json::Array &breakpoints,
     std::optional<llvm::StringRef> request_path = std::nullopt,
     std::optional<uint32_t> request_line = std::nullopt);
 
@@ -224,7 +223,7 @@ void AppendBreakpoint(
 ///     A "Breakpoint" JSON object with that follows the formal JSON
 ///     definition outlined by Microsoft.
 llvm::json::Value
-CreateBreakpoint(BreakpointBase *bp,
+CreateBreakpoint(lldb::SBBreakpoint &bp,
                  std::optional<llvm::StringRef> request_path = std::nullopt,
                  std::optional<uint32_t> request_line = std::nullopt,
                  std::optional<uint32_t> request_column = std::nullopt);
@@ -321,17 +320,6 @@ llvm::json::Value CreateSource(llvm::StringRef source_path);
 ///     A "StackFrame" JSON object with that follows the formal JSON
 ///     definition outlined by Microsoft.
 llvm::json::Value CreateStackFrame(lldb::SBFrame &frame);
-
-/// Create a "instruction" object for a LLDB disassemble object as described in
-/// the Visual Studio Code debug adaptor definition.
-///
-/// \param[in] bp
-///     The LLDB instruction object used to populate the disassembly
-///     instruction.
-/// \return
-///     A "Scope" JSON object with that follows the formal JSON
-///     definition outlined by Microsoft.
-llvm::json::Value CreateInstructionBreakpoint(BreakpointBase *ibp);
 
 /// Create a "Thread" object for a LLDB thread object.
 ///

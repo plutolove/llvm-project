@@ -58,7 +58,7 @@
 #  endif
 #endif
 
-#include <__thread/support.h>
+#include <__threading_support>
 #include <cstdint>
 #include <cstring>
 #include <limits.h>

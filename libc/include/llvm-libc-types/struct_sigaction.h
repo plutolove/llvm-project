@@ -6,18 +6,18 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVM_LIBC_TYPES_STRUCT_SIGACTION_H
-#define LLVM_LIBC_TYPES_STRUCT_SIGACTION_H
+#ifndef __LLVM_LIBC_TYPES_SIGACTION_H__
+#define __LLVM_LIBC_TYPES_SIGACTION_H__
 
-#include "llvm-libc-types/siginfo_t.h"
-#include "llvm-libc-types/sigset_t.h"
+#include <llvm-libc-types/siginfo_t.h>
+#include <llvm-libc-types/sigset_t.h>
 
 struct sigaction {
   union {
     void (*sa_handler)(int);
     void (*sa_sigaction)(int, siginfo_t *, void *);
   };
-  struct sigset_t sa_mask;
+  sigset_t sa_mask;
   int sa_flags;
 #ifdef __linux__
   // This field is present on linux for most targets.
@@ -27,4 +27,4 @@ struct sigaction {
 
 typedef void (*__sighandler_t)(int);
 
-#endif // LLVM_LIBC_TYPES_STRUCT_SIGACTION_H
+#endif // __LLVM_LIBC_TYPES_SIGACTION_H__

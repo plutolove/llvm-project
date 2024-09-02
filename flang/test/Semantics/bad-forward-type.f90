@@ -76,8 +76,7 @@ subroutine s8
   !ERROR: Cannot construct value for derived type 't2' before it is defined
   parameter(y=t2(12.3))
   type t2
-    !ERROR: Cannot construct value for derived type 't2' before it is defined
-    real :: c = transfer(t2(),0.)
+    real :: c
   end type
 end subroutine
 

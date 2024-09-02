@@ -1,5 +1,4 @@
 //===----------------------------------------------------------------------===//
-//
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -8,7 +7,7 @@
 
 // UNSUPPORTED: c++03, c++11, c++14, c++17
 // TODO FMT __builtin_memcpy isn't constexpr in GCC
-// UNSUPPORTED: gcc-14
+// UNSUPPORTED: gcc-13
 
 // <format>
 
@@ -22,7 +21,6 @@
 #include <cassert>
 #include <concepts>
 #include <iterator>
-#include <memory>
 #include <type_traits>
 
 #include "test_format_context.h"
@@ -52,9 +50,8 @@ struct Tester {
     std::formatter<Str, CharT> formatter;
     static_assert(std::semiregular<decltype(formatter)>);
 
-    std::same_as<typename std::basic_string_view<CharT>::iterator> auto it = formatter.parse(parse_ctx);
-    // std::to_address works around LWG3989 and MSVC STL's iterator debugging mechanism.
-    assert(std::to_address(it) == std::to_address(fmt.end()) - offset);
+    auto it = formatter.parse(parse_ctx);
+    assert(it == fmt.end() - offset);
 
     std::basic_string<CharT> result;
     auto out = std::back_inserter(result);

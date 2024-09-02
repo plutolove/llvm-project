@@ -286,7 +286,7 @@ static void writeSequence(MutableArrayRef<uint32_t> buf, const char *prefix,
   // The full section content has the extent of [begin, end). We drop unused
   // instructions and write [first,end).
   auto *sec = make<InputSection>(
-      ctx.internalFile, SHF_ALLOC, SHT_PROGBITS, 4,
+      nullptr, SHF_ALLOC, SHT_PROGBITS, 4,
       ArrayRef(reinterpret_cast<uint8_t *>(buf.data() + first),
                4 * (buf.size() - first)),
       ".text");
@@ -347,7 +347,7 @@ getRelaTocSymAndAddend(InputSectionBase *tocSec, uint64_t offset) {
   uint64_t index = std::min<uint64_t>(offset / 8, relas.size() - 1);
   for (;;) {
     if (relas[index].r_offset == offset) {
-      Symbol &sym = tocSec->file->getRelocTargetSym(relas[index]);
+      Symbol &sym = tocSec->getFile<ELFT>()->getRelocTargetSym(relas[index]);
       return {dyn_cast<Defined>(&sym), getAddend<ELFT>(relas[index])};
     }
     if (relas[index].r_offset < offset || index == 0)
@@ -409,8 +409,8 @@ static bool tryRelaxPPC64TocIndirection(const Relocation &rel,
     return false;
 
   // Add PPC64TocOffset that will be subtracted by PPC64::relocate().
-  static_cast<const PPC64 &>(*ctx.target)
-      .relaxGot(bufLoc, rel, tocRelative + ppc64TocOffset);
+  static_cast<const PPC64 &>(*target).relaxGot(bufLoc, rel,
+                                               tocRelative + ppc64TocOffset);
   return true;
 }
 
@@ -1593,7 +1593,7 @@ void PPC64::relocateAlloc(InputSectionBase &sec, uint8_t *buf) const {
       // entry, there may be R_PPC64_TOC16_HA not paired with
       // R_PPC64_TOC16_LO_DS. Don't relax. This loses some relaxation
       // opportunities but is safe.
-      if (ctx.ppc64noTocRelax.count({rel.sym, rel.addend}) ||
+      if (ppc64noTocRelax.count({rel.sym, rel.addend}) ||
           !tryRelaxPPC64TocIndirection(rel, loc))
         relocate(loc, rel, val);
       break;

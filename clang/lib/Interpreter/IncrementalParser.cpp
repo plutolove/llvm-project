@@ -79,7 +79,7 @@ public:
   void CompleteTentativeDefinition(VarDecl *D) override final {
     Consumer->CompleteTentativeDefinition(D);
   }
-  void CompleteExternalDeclaration(DeclaratorDecl *D) override final {
+  void CompleteExternalDeclaration(VarDecl *D) override final {
     Consumer->CompleteExternalDeclaration(D);
   }
   void AssignInheritanceModel(CXXRecordDecl *RD) override final {
@@ -387,35 +387,19 @@ std::unique_ptr<llvm::Module> IncrementalParser::GenModule() {
 
 void IncrementalParser::CleanUpPTU(PartialTranslationUnit &PTU) {
   TranslationUnitDecl *MostRecentTU = PTU.TUPart;
-  if (StoredDeclsMap *Map = MostRecentTU->getPrimaryContext()->getLookupPtr()) {
-    for (auto &&[Key, List] : *Map) {
+  TranslationUnitDecl *FirstTU = MostRecentTU->getFirstDecl();
+  if (StoredDeclsMap *Map = FirstTU->getPrimaryContext()->getLookupPtr()) {
+    for (auto I = Map->begin(); I != Map->end(); ++I) {
+      StoredDeclsList &List = I->second;
       DeclContextLookupResult R = List.getLookupResult();
-      std::vector<NamedDecl *> NamedDeclsToRemove;
-      bool RemoveAll = true;
       for (NamedDecl *D : R) {
-        if (D->getTranslationUnitDecl() == MostRecentTU)
-          NamedDeclsToRemove.push_back(D);
-        else
-          RemoveAll = false;
-      }
-      if (LLVM_LIKELY(RemoveAll)) {
-        Map->erase(Key);
-      } else {
-        for (NamedDecl *D : NamedDeclsToRemove)
+        if (D->getTranslationUnitDecl() == MostRecentTU) {
           List.remove(D);
+        }
       }
+      if (List.isNull())
+        Map->erase(I);
     }
-  }
-
-  // FIXME: We should de-allocate MostRecentTU
-  for (Decl *D : MostRecentTU->decls()) {
-    auto *ND = dyn_cast<NamedDecl>(D);
-    if (!ND)
-      continue;
-    // Check if we need to clean up the IdResolver chain.
-    if (ND->getDeclName().getFETokenInfo() && !D->getLangOpts().ObjC &&
-        !D->getLangOpts().CPlusPlus)
-      getCI()->getSema().IdResolver.RemoveDecl(ND);
   }
 }
 

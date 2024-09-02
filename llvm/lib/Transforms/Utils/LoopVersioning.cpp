@@ -42,8 +42,10 @@ LoopVersioning::LoopVersioning(const LoopAccessInfo &LAI,
                                ArrayRef<RuntimePointerCheck> Checks, Loop *L,
                                LoopInfo *LI, DominatorTree *DT,
                                ScalarEvolution *SE)
-    : VersionedLoop(L), AliasChecks(Checks), Preds(LAI.getPSE().getPredicate()),
-      LAI(LAI), LI(LI), DT(DT), SE(SE) {}
+    : VersionedLoop(L), AliasChecks(Checks.begin(), Checks.end()),
+      Preds(LAI.getPSE().getPredicate()), LAI(LAI), LI(LI), DT(DT),
+      SE(SE) {
+}
 
 void LoopVersioning::versionLoop(
     const SmallVectorImpl<Instruction *> &DefsUsedOutside) {
@@ -60,19 +62,19 @@ void LoopVersioning::versionLoop(
   const auto &RtPtrChecking = *LAI.getRuntimePointerChecking();
 
   SCEVExpander Exp2(*RtPtrChecking.getSE(),
-                    VersionedLoop->getHeader()->getDataLayout(),
+                    VersionedLoop->getHeader()->getModule()->getDataLayout(),
                     "induction");
   MemRuntimeCheck = addRuntimeChecks(RuntimeCheckBB->getTerminator(),
                                      VersionedLoop, AliasChecks, Exp2);
 
-  SCEVExpander Exp(*SE, RuntimeCheckBB->getDataLayout(),
+  SCEVExpander Exp(*SE, RuntimeCheckBB->getModule()->getDataLayout(),
                    "scev.check");
   SCEVRuntimeCheck =
       Exp.expandCodeForPredicate(&Preds, RuntimeCheckBB->getTerminator());
 
   IRBuilder<InstSimplifyFolder> Builder(
       RuntimeCheckBB->getContext(),
-      InstSimplifyFolder(RuntimeCheckBB->getDataLayout()));
+      InstSimplifyFolder(RuntimeCheckBB->getModule()->getDataLayout()));
   if (MemRuntimeCheck && SCEVRuntimeCheck) {
     Builder.SetInsertPoint(RuntimeCheckBB->getTerminator());
     RuntimeCheck =

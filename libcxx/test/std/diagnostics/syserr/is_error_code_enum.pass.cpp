@@ -33,8 +33,12 @@ class A {
 };
 
 // Specialize the template for my class
-template <>
-struct std::is_error_code_enum<A> : public std::true_type {};
+namespace std
+{
+  template <>
+  struct is_error_code_enum<A> : public std::true_type {};
+}
+
 
 int main(int, char**)
 {

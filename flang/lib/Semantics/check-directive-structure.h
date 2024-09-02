@@ -176,8 +176,8 @@ template <typename D, typename C, typename PC, std::size_t ClauseEnumSize>
 class DirectiveStructureChecker : public virtual BaseChecker {
 protected:
   DirectiveStructureChecker(SemanticsContext &context,
-      const std::unordered_map<D, DirectiveClauses<C, ClauseEnumSize>>
-          &directiveClausesMap)
+      std::unordered_map<D, DirectiveClauses<C, ClauseEnumSize>>
+          directiveClausesMap)
       : context_{context}, directiveClausesMap_(directiveClausesMap) {}
   virtual ~DirectiveStructureChecker() {}
 
@@ -354,9 +354,7 @@ protected:
 
   void CheckRequireAtLeastOneOf(bool warnInsteadOfError = false);
 
-  // Check if a clause is allowed on a directive. Returns true if is and
-  // false otherwise.
-  bool CheckAllowed(C clause, bool warnInsteadOfError = false);
+  void CheckAllowed(C clause, bool warnInsteadOfError = false);
 
   // Check that the clause appears only once. The counter is reset when the
   // separator clause appears.
@@ -486,7 +484,7 @@ std::string DirectiveStructureChecker<D, C, PC,
 
 // Check that clauses present on the directive are allowed clauses.
 template <typename D, typename C, typename PC, std::size_t ClauseEnumSize>
-bool DirectiveStructureChecker<D, C, PC, ClauseEnumSize>::CheckAllowed(
+void DirectiveStructureChecker<D, C, PC, ClauseEnumSize>::CheckAllowed(
     C clause, bool warnInsteadOfError) {
   if (!GetContext().allowedClauses.test(clause) &&
       !GetContext().allowedOnceClauses.test(clause) &&
@@ -506,7 +504,7 @@ bool DirectiveStructureChecker<D, C, PC, ClauseEnumSize>::CheckAllowed(
           parser::ToUpperCaseLetters(getClauseName(clause).str()),
           parser::ToUpperCaseLetters(GetContext().directiveSource.ToString()));
     }
-    return false;
+    return;
   }
   if ((GetContext().allowedOnceClauses.test(clause) ||
           GetContext().allowedExclusiveClauses.test(clause)) &&
@@ -515,7 +513,7 @@ bool DirectiveStructureChecker<D, C, PC, ClauseEnumSize>::CheckAllowed(
         "At most one %s clause can appear on the %s directive"_err_en_US,
         parser::ToUpperCaseLetters(getClauseName(clause).str()),
         parser::ToUpperCaseLetters(GetContext().directiveSource.ToString()));
-    return false;
+    return;
   }
   if (GetContext().allowedExclusiveClauses.test(clause)) {
     std::vector<C> others;
@@ -533,13 +531,12 @@ bool DirectiveStructureChecker<D, C, PC, ClauseEnumSize>::CheckAllowed(
           parser::ToUpperCaseLetters(GetContext().directiveSource.ToString()));
     }
     if (!others.empty()) {
-      return false;
+      return;
     }
   }
   SetContextClauseInfo(clause);
   AddClauseToCrtContext(clause);
   AddClauseToCrtGroupInContext(clause);
-  return true;
 }
 
 // Enforce restriction where clauses in the given set are not allowed if the

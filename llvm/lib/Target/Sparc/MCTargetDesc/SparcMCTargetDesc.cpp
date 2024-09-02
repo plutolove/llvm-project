@@ -26,11 +26,6 @@ namespace SparcASITag {
 #define GET_ASITagsList_IMPL
 #include "SparcGenSearchableTables.inc"
 } // end namespace SparcASITag
-
-namespace SparcPrefetchTag {
-#define GET_PrefetchTagsList_IMPL
-#include "SparcGenSearchableTables.inc"
-} // end namespace SparcPrefetchTag
 } // end namespace llvm
 
 using namespace llvm;
@@ -86,12 +81,13 @@ createSparcMCSubtargetInfo(const Triple &TT, StringRef CPU, StringRef FS) {
 
 static MCTargetStreamer *
 createObjectTargetStreamer(MCStreamer &S, const MCSubtargetInfo &STI) {
-  return new SparcTargetELFStreamer(S, STI);
+  return new SparcTargetELFStreamer(S);
 }
 
 static MCTargetStreamer *createTargetAsmStreamer(MCStreamer &S,
                                                  formatted_raw_ostream &OS,
-                                                 MCInstPrinter *InstPrint) {
+                                                 MCInstPrinter *InstPrint,
+                                                 bool isVerboseAsm) {
   return new SparcTargetAsmStreamer(S, OS);
 }
 

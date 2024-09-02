@@ -53,14 +53,6 @@ Pass *createLoopStrengthReducePass();
 
 //===----------------------------------------------------------------------===//
 //
-// LoopTermFold -  This pass attempts to eliminate the last use of an IV in
-// a loop terminator instruction by rewriting it in terms of another IV.
-// Expected to be run immediately after LSR.
-//
-Pass *createLoopTermFoldPass();
-
-//===----------------------------------------------------------------------===//
-//
 // LoopUnroll - This pass is a simple loop unrolling pass.
 //
 Pass *createLoopUnrollPass(int OptLevel = 2, bool OnlyWhenForced = false,
@@ -68,6 +60,12 @@ Pass *createLoopUnrollPass(int OptLevel = 2, bool OnlyWhenForced = false,
                            int Count = -1, int AllowPartial = -1,
                            int Runtime = -1, int UpperBound = -1,
                            int AllowPeeling = -1);
+
+//===----------------------------------------------------------------------===//
+//
+// LoopRotate - This pass is a simple loop rotating pass.
+//
+Pass *createLoopRotatePass(int MaxHeaderSize = -1, bool PrepareForLTO = false);
 
 //===----------------------------------------------------------------------===//
 //
@@ -156,6 +154,13 @@ extern char &InferAddressSpacesID;
 // TLSVariableHoist - This pass reduce duplicated TLS address call.
 //
 FunctionPass *createTLSVariableHoistPass();
+
+//===----------------------------------------------------------------------===//
+//
+// LowerConstantIntrinsicss - Expand any remaining llvm.objectsize and
+// llvm.is.constant intrinsic calls, even for the unknown cases.
+//
+FunctionPass *createLowerConstantIntrinsicsPass();
 
 //===----------------------------------------------------------------------===//
 //

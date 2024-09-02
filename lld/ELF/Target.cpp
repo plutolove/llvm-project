@@ -38,6 +38,8 @@ using namespace llvm::ELF;
 using namespace lld;
 using namespace lld::elf;
 
+const TargetInfo *elf::target;
+
 std::string lld::toString(RelType type) {
   StringRef s = getELFRelocationTypeName(elf::config->emachine, type);
   if (s == "Unknown")
@@ -89,9 +91,8 @@ TargetInfo *elf::getTarget() {
     return getSystemZTargetInfo();
   case EM_X86_64:
     return getX86_64TargetInfo();
-  default:
-    fatal("unsupported e_machine value: " + Twine(config->emachine));
   }
+  llvm_unreachable("unknown target machine");
 }
 
 ErrorPlace elf::getErrorPlace(const uint8_t *loc) {
@@ -102,8 +103,8 @@ ErrorPlace elf::getErrorPlace(const uint8_t *loc) {
       continue;
 
     const uint8_t *isecLoc =
-        ctx.bufferStart
-            ? (ctx.bufferStart + isec->getParent()->offset + isec->outSecOff)
+        Out::bufferStart
+            ? (Out::bufferStart + isec->getParent()->offset + isec->outSecOff)
             : isec->contentMaybeDecompress().data();
     if (isecLoc == nullptr) {
       assert(isa<SyntheticSection>(isec) && "No data but not synthetic?");
@@ -139,7 +140,7 @@ bool TargetInfo::needsThunk(RelExpr expr, RelType type, const InputFile *file,
 
 bool TargetInfo::adjustPrologueForCrossSplitStack(uint8_t *loc, uint8_t *end,
                                                   uint8_t stOther) const {
-  fatal("target doesn't support split stacks");
+  llvm_unreachable("Target doesn't support split stacks.");
 }
 
 bool TargetInfo::inBranchRange(RelType type, uint64_t src, uint64_t dst) const {

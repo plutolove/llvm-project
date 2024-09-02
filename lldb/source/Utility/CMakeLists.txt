@@ -39,7 +39,6 @@ add_lldb_library(lldbUtility NO_INTERNAL_DEPENDENCIES
   DataExtractor.cpp
   Diagnostics.cpp
   Environment.cpp
-  ErrorMessages.cpp
   Event.cpp
   FileSpec.cpp
   FileSpecList.cpp
@@ -51,7 +50,6 @@ add_lldb_library(lldbUtility NO_INTERNAL_DEPENDENCIES
   Log.cpp
   NameMatches.cpp
   ProcessInfo.cpp
-  RealpathPrefixes.cpp
   RegisterValue.cpp
   RegularExpression.cpp
   Instrumentation.cpp

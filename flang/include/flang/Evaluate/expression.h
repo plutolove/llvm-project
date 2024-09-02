@@ -660,7 +660,7 @@ extern template class Relational<SomeType>;
 // Logical expressions of a kind bigger than LogicalResult
 // do not include Relational<> operations as possibilities,
 // since the results of Relationals are always LogicalResult
-// (kind=4).
+// (kind=1).
 template <int KIND>
 class Expr<Type<TypeCategory::Logical, KIND>>
     : public ExpressionBase<Type<TypeCategory::Logical, KIND>> {
@@ -735,7 +735,8 @@ public:
   StructureConstructor &Add(const semantics::Symbol &, Expr<SomeType> &&);
   int Rank() const { return 0; }
   DynamicType GetType() const;
-  llvm::raw_ostream &AsFortran(llvm::raw_ostream &) const;
+  llvm::raw_ostream &AsFortran(llvm::raw_ostream &,
+      const parser::CharBlock *derivedTypeRename = nullptr) const;
 
 private:
   std::optional<Expr<SomeType>> CreateParentComponent(const Symbol &) const;

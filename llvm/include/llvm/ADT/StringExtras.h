@@ -140,17 +140,6 @@ inline bool isPrint(char C) {
   return (0x20 <= UC) && (UC <= 0x7E);
 }
 
-/// Checks whether character \p C is a punctuation character.
-///
-/// Locale-independent version of the C standard library ispunct. The list of
-/// punctuation characters can be found in the documentation of std::ispunct:
-/// https://en.cppreference.com/w/cpp/string/byte/ispunct.
-inline bool isPunct(char C) {
-  static constexpr StringLiteral Punctuations =
-      R"(!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~)";
-  return Punctuations.contains(C);
-}
-
 /// Checks whether character \p C is whitespace in the "C" locale.
 ///
 /// Locale-independent version of the C standard library isspace.
@@ -340,11 +329,9 @@ inline std::string itostr(int64_t X) {
 }
 
 inline std::string toString(const APInt &I, unsigned Radix, bool Signed,
-                            bool formatAsCLiteral = false,
-                            bool UpperCase = true,
-                            bool InsertSeparators = false) {
+                            bool formatAsCLiteral = false) {
   SmallString<40> S;
-  I.toString(S, Radix, Signed, formatAsCLiteral, UpperCase, InsertSeparators);
+  I.toString(S, Radix, Signed, formatAsCLiteral);
   return std::string(S);
 }
 

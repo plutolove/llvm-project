@@ -18,6 +18,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/TargetFolder.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/ValueHandle.h"
@@ -195,8 +196,7 @@ public:
   T Offset;
 
   SizeOffsetType() = default;
-  SizeOffsetType(T Size, T Offset)
-      : Size(std::move(Size)), Offset(std::move(Offset)) {}
+  SizeOffsetType(T Size, T Offset) : Size(Size), Offset(Offset) {}
 
   bool knownSize() const { return C::known(Size); }
   bool knownOffset() const { return C::known(Offset); }
@@ -215,10 +215,9 @@ public:
 /// \p APInts.
 struct SizeOffsetAPInt : public SizeOffsetType<APInt, SizeOffsetAPInt> {
   SizeOffsetAPInt() = default;
-  SizeOffsetAPInt(APInt Size, APInt Offset)
-      : SizeOffsetType(std::move(Size), std::move(Offset)) {}
+  SizeOffsetAPInt(APInt Size, APInt Offset) : SizeOffsetType(Size, Offset) {}
 
-  static bool known(const APInt &V) { return V.getBitWidth() > 1; }
+  static bool known(APInt V) { return V.getBitWidth() > 1; }
 };
 
 /// Evaluate the size and offset of an object pointed to by a Value*

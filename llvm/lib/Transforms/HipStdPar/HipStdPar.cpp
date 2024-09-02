@@ -80,7 +80,7 @@ static inline bool checkIfSupported(GlobalVariable &G) {
     << G.getName();
 
   Instruction *I = nullptr;
-  SmallVector<User *> Tmp(G.users());
+  SmallVector<User *> Tmp(G.user_begin(), G.user_end());
   SmallPtrSet<User *, 5> Visited;
   do {
     auto U = std::move(Tmp.back());
@@ -133,7 +133,6 @@ static inline void maybeHandleGlobals(Module &M) {
       continue;
 
     G.setLinkage(GlobalVariable::ExternalWeakLinkage);
-    G.setInitializer(nullptr);
     G.setExternallyInitialized(true);
   }
 }

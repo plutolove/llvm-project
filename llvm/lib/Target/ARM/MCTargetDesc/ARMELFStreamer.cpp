@@ -27,14 +27,12 @@
 #include "llvm/MC/MCAssembler.h"
 #include "llvm/MC/MCCodeEmitter.h"
 #include "llvm/MC/MCContext.h"
-#include "llvm/MC/MCELFObjectWriter.h"
 #include "llvm/MC/MCELFStreamer.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCFixup.h"
 #include "llvm/MC/MCFragment.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstPrinter.h"
-#include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCObjectWriter.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSection.h"
@@ -116,14 +114,15 @@ class ARMTargetAsmStreamer : public ARMTargetStreamer {
 
 public:
   ARMTargetAsmStreamer(MCStreamer &S, formatted_raw_ostream &OS,
-                       MCInstPrinter &InstPrinter);
+                       MCInstPrinter &InstPrinter, bool VerboseAsm);
 };
 
 ARMTargetAsmStreamer::ARMTargetAsmStreamer(MCStreamer &S,
                                            formatted_raw_ostream &OS,
-                                           MCInstPrinter &InstPrinter)
+                                           MCInstPrinter &InstPrinter,
+                                           bool VerboseAsm)
     : ARMTargetStreamer(S), OS(OS), InstPrinter(InstPrinter),
-      IsVerboseAsm(S.isVerboseAsm()) {}
+      IsVerboseAsm(VerboseAsm) {}
 
 void ARMTargetAsmStreamer::emitFnStart() { OS << "\t.fnstart\n"; }
 void ARMTargetAsmStreamer::emitFnEnd() { OS << "\t.fnend\n"; }
@@ -427,8 +426,6 @@ private:
   // Reset state between object emissions
   void reset() override;
 
-  void finish() override;
-
 public:
   ARMTargetELFStreamer(MCStreamer &S)
     : ARMTargetStreamer(S), CurrentVendor("aeabi") {}
@@ -462,6 +459,8 @@ public:
 
   ~ARMELFStreamer() override = default;
 
+  void finishImpl() override;
+
   // ARM exception handling directives
   void emitFnStart();
   void emitFnEnd();
@@ -480,7 +479,7 @@ public:
     MCObjectStreamer::emitFill(NumBytes, FillValue, Loc);
   }
 
-  void changeSection(MCSection *Section, uint32_t Subsection) override {
+  void changeSection(MCSection *Section, const MCExpr *Subsection) override {
     LastMappingSymbols[getCurrentSection().first] = std::move(LastEMSInfo);
     MCELFStreamer::changeSection(Section, Subsection);
     auto LastMappingSymbol = LastMappingSymbols.find(Section);
@@ -488,7 +487,7 @@ public:
       LastEMSInfo = std::move(LastMappingSymbol->second);
       return;
     }
-    LastEMSInfo.reset(new ElfMappingSymbolInfo);
+    LastEMSInfo.reset(new ElfMappingSymbolInfo(SMLoc(), nullptr, 0));
   }
 
   /// This function is the one used to emit instruction data into the ELF
@@ -556,7 +555,7 @@ public:
     if (!LastEMSInfo->hasInfo())
       return;
     ElfMappingSymbolInfo *EMS = LastEMSInfo.get();
-    emitMappingSymbol("$d", *EMS->F, EMS->Offset);
+    EmitMappingSymbol("$d", EMS->Loc, EMS->F, EMS->Offset);
     EMS->resetInfo();
   }
 
@@ -626,14 +625,17 @@ private:
   };
 
   struct ElfMappingSymbolInfo {
+    explicit ElfMappingSymbolInfo(SMLoc Loc, MCFragment *F, uint64_t O)
+        : Loc(Loc), F(F), Offset(O), State(EMS_None) {}
     void resetInfo() {
       F = nullptr;
       Offset = 0;
     }
     bool hasInfo() { return F != nullptr; }
-    MCDataFragment *F = nullptr;
-    uint64_t Offset = 0;
-    ElfMappingSymbol State = EMS_None;
+    SMLoc Loc;
+    MCFragment *F;
+    uint64_t Offset;
+    ElfMappingSymbol State;
   };
 
   void emitDataMappingSymbol() {
@@ -646,7 +648,8 @@ private:
       auto *DF = dyn_cast_or_null<MCDataFragment>(getCurrentFragment());
       if (!DF)
         return;
-      EMS->F = DF;
+      EMS->Loc = SMLoc();
+      EMS->F = getCurrentFragment();
       EMS->Offset = DF->getContents().size();
       LastEMSInfo->State = EMS_Data;
       return;
@@ -672,16 +675,19 @@ private:
   }
 
   void EmitMappingSymbol(StringRef Name) {
-    auto *Symbol = cast<MCSymbolELF>(getContext().createLocalSymbol(Name));
+    auto *Symbol = cast<MCSymbolELF>(getContext().getOrCreateSymbol(
+        Name + "." + Twine(MappingSymbolCounter++)));
     emitLabel(Symbol);
 
     Symbol->setType(ELF::STT_NOTYPE);
     Symbol->setBinding(ELF::STB_LOCAL);
   }
 
-  void emitMappingSymbol(StringRef Name, MCDataFragment &F, uint64_t Offset) {
-    auto *Symbol = cast<MCSymbolELF>(getContext().createLocalSymbol(Name));
-    emitLabelAtPos(Symbol, SMLoc(), F, Offset);
+  void EmitMappingSymbol(StringRef Name, SMLoc Loc, MCFragment *F,
+                         uint64_t Offset) {
+    auto *Symbol = cast<MCSymbolELF>(getContext().getOrCreateSymbol(
+        Name + "." + Twine(MappingSymbolCounter++)));
+    emitLabelAtPos(Symbol, Loc, F, Offset);
     Symbol->setType(ELF::STT_NOTYPE);
     Symbol->setBinding(ELF::STB_LOCAL);
   }
@@ -710,6 +716,7 @@ private:
 
   bool IsThumb;
   bool IsAndroid;
+  int64_t MappingSymbolCounter = 0;
 
   DenseMap<const MCSection *, std::unique_ptr<ElfMappingSymbolInfo>>
       LastMappingSymbols;
@@ -992,10 +999,6 @@ void ARMTargetELFStreamer::emitFPUDefaultAttributes() {
   // uses the FP_ARMV8_D16 build attribute.
   case ARM::FK_FPV5_SP_D16:
   case ARM::FK_FPV5_D16:
-  // FPv5 and FP-ARMv8 have the same instructions, so are modeled as one
-  // FPU, but there are two different names for it depending on the CPU.
-  case ARM::FK_FP_ARMV8_FULLFP16_SP_D16:
-  case ARM::FK_FP_ARMV8_FULLFP16_D16:
     S.setAttributeItem(ARMBuildAttrs::FP_arch, ARMBuildAttrs::AllowFPARMv8B,
                        /* OverwriteExisting= */ false);
     break;
@@ -1115,41 +1118,26 @@ void ARMTargetELFStreamer::emitInst(uint32_t Inst, char Suffix) {
 
 void ARMTargetELFStreamer::reset() { AttributeSection = nullptr; }
 
-void ARMTargetELFStreamer::finish() {
-  ARMTargetStreamer::finish();
-  finishAttributeSection();
+void ARMELFStreamer::finishImpl() {
+  MCTargetStreamer &TS = *getTargetStreamer();
+  ARMTargetStreamer &ATS = static_cast<ARMTargetStreamer &>(TS);
+  ATS.finishAttributeSection();
 
-  // The mix of execute-only and non-execute-only at link time is
-  // non-execute-only. To avoid the empty implicitly created .text
-  // section from making the whole .text section non-execute-only, we
-  // mark it execute-only if it is empty and there is at least one
-  // execute-only section in the object.
-  MCContext &Ctx = getStreamer().getContext();
-  auto &Asm = getStreamer().getAssembler();
-  if (any_of(Asm, [](const MCSection &Sec) {
-        return cast<MCSectionELF>(Sec).getFlags() & ELF::SHF_ARM_PURECODE;
-      })) {
-    auto *Text =
-        static_cast<MCSectionELF *>(Ctx.getObjectFileInfo()->getTextSection());
-    for (auto &F : *Text)
-      if (auto *DF = dyn_cast<MCDataFragment>(&F))
-        if (!DF->getContents().empty())
-          return;
-    Text->setFlags(Text->getFlags() | ELF::SHF_ARM_PURECODE);
-  }
+  MCELFStreamer::finishImpl();
 }
 
 void ARMELFStreamer::reset() {
   MCTargetStreamer &TS = *getTargetStreamer();
   ARMTargetStreamer &ATS = static_cast<ARMTargetStreamer &>(TS);
   ATS.reset();
+  MappingSymbolCounter = 0;
   MCELFStreamer::reset();
   LastMappingSymbols.clear();
   LastEMSInfo.reset();
   // MCELFStreamer clear's the assembler's e_flags. However, for
   // arm we manually set the ABI version on streamer creation, so
   // do the same here
-  getWriter().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
+  getAssembler().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
 }
 
 inline void ARMELFStreamer::SwitchToEHSection(StringRef Prefix,
@@ -1482,8 +1470,9 @@ namespace llvm {
 
 MCTargetStreamer *createARMTargetAsmStreamer(MCStreamer &S,
                                              formatted_raw_ostream &OS,
-                                             MCInstPrinter *InstPrint) {
-  return new ARMTargetAsmStreamer(S, OS, *InstPrint);
+                                             MCInstPrinter *InstPrint,
+                                             bool isVerboseAsm) {
+  return new ARMTargetAsmStreamer(S, OS, *InstPrint, isVerboseAsm);
 }
 
 MCTargetStreamer *createARMNullTargetStreamer(MCStreamer &S) {
@@ -1498,15 +1487,18 @@ MCELFStreamer *createARMELFStreamer(MCContext &Context,
                                     std::unique_ptr<MCAsmBackend> TAB,
                                     std::unique_ptr<MCObjectWriter> OW,
                                     std::unique_ptr<MCCodeEmitter> Emitter,
-                                    bool IsThumb, bool IsAndroid) {
+                                    bool RelaxAll, bool IsThumb,
+                                    bool IsAndroid) {
   ARMELFStreamer *S =
       new ARMELFStreamer(Context, std::move(TAB), std::move(OW),
                          std::move(Emitter), IsThumb, IsAndroid);
   // FIXME: This should eventually end up somewhere else where more
   // intelligent flag decisions can be made. For now we are just maintaining
   // the status quo for ARM and setting EF_ARM_EABI_VER5 as the default.
-  S->getWriter().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
+  S->getAssembler().setELFHeaderEFlags(ELF::EF_ARM_EABI_VER5);
 
+  if (RelaxAll)
+    S->getAssembler().setRelaxAll(true);
   return S;
 }
 

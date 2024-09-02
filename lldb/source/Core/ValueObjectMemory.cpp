@@ -126,21 +126,17 @@ ConstString ValueObjectMemory::GetDisplayTypeName() {
   return m_compiler_type.GetDisplayTypeName();
 }
 
-llvm::Expected<uint32_t> ValueObjectMemory::CalculateNumChildren(uint32_t max) {
+size_t ValueObjectMemory::CalculateNumChildren(uint32_t max) {
   if (m_type_sp) {
     auto child_count = m_type_sp->GetNumChildren(true);
-    if (!child_count)
-      return child_count;
-    return *child_count <= max ? *child_count : max;
+    return child_count <= max ? child_count : max;
   }
 
   ExecutionContext exe_ctx(GetExecutionContextRef());
   const bool omit_empty_base_classes = true;
   auto child_count =
       m_compiler_type.GetNumChildren(omit_empty_base_classes, &exe_ctx);
-  if (!child_count)
-    return child_count;
-  return *child_count <= max ? *child_count : max;
+  return child_count <= max ? child_count : max;
 }
 
 std::optional<uint64_t> ValueObjectMemory::GetByteSize() {
@@ -173,7 +169,7 @@ bool ValueObjectMemory::UpdateValue() {
 
     switch (value_type) {
     case Value::ValueType::Invalid:
-      m_error = Status::FromErrorString("Invalid value");
+      m_error.SetErrorString("Invalid value");
       return false;
     case Value::ValueType::Scalar:
       // The variable value is in the Scalar value inside the m_value. We can

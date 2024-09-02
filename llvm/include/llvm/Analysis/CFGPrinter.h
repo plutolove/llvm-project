@@ -133,7 +133,7 @@ std::string SimpleNodeLabelString(const BasicBlockT *Node) {
   raw_string_ostream OS(Str);
 
   Node->printAsOperand(OS, false);
-  return Str;
+  return OS.str();
 }
 
 template <typename BasicBlockT>
@@ -145,9 +145,10 @@ std::string CompleteNodeLabelString(
         HandleComment) {
 
   enum { MaxColumns = 80 };
-  std::string OutStr;
-  raw_string_ostream OS(OutStr);
+  std::string Str;
+  raw_string_ostream OS(Str);
   HandleBasicBlock(OS, *Node);
+  std::string OutStr = OS.str();
   // Remove "%" from BB name
   if (OutStr[0] == '%') {
     OutStr.erase(OutStr.begin());
@@ -207,8 +208,10 @@ struct DOTGraphTraits<DOTFuncInfo *> : public DefaultDOTGraphTraits {
     // Prepend label name
     Node.printAsOperand(OS, false);
     OS << ":\n";
-    for (const Instruction &Inst : Node)
-      OS << Inst << "\n";
+    for (auto J = Node.begin(), JE = Node.end(); J != JE; ++J) {
+      const Instruction *Inst = &*J;
+      OS << *Inst << "\n";
+    }
   }
 
   static std::string getCompleteNodeLabel(
@@ -246,7 +249,7 @@ struct DOTGraphTraits<DOTFuncInfo *> : public DefaultDOTGraphTraits {
       raw_string_ostream OS(Str);
       auto Case = *SwitchInst::ConstCaseIt::fromSuccessorIndex(SI, SuccNo);
       OS << Case.getCaseValue()->getValue();
-      return Str;
+      return OS.str();
     }
     return "";
   }
@@ -256,6 +259,7 @@ struct DOTGraphTraits<DOTFuncInfo *> : public DefaultDOTGraphTraits {
     if (NodeName.empty()) {
       raw_string_ostream NodeOS(NodeName);
       Node->printAsOperand(NodeOS, false);
+      NodeName = NodeOS.str();
       // Removing %
       NodeName.erase(NodeName.begin());
     }
@@ -265,19 +269,18 @@ struct DOTGraphTraits<DOTFuncInfo *> : public DefaultDOTGraphTraits {
   /// Display the raw branch weights from PGO.
   std::string getEdgeAttributes(const BasicBlock *Node, const_succ_iterator I,
                                 DOTFuncInfo *CFGInfo) {
-    // If BPI is not provided do not display any edge attributes
-    if (!CFGInfo->showEdgeWeights())
-      return "";
-
     unsigned OpNo = I.getSuccessorIndex();
     const Instruction *TI = Node->getTerminator();
     BasicBlock *SuccBB = TI->getSuccessor(OpNo);
     auto BranchProb = CFGInfo->getBPI()->getEdgeProbability(Node, SuccBB);
     double WeightPercent = ((double)BranchProb.getNumerator()) /
                            ((double)BranchProb.getDenominator());
+
     std::string TTAttr =
         formatv("tooltip=\"{0} -> {1}\\nProbability {2:P}\" ", getBBName(Node),
                 getBBName(SuccBB), WeightPercent);
+    if (!CFGInfo->showEdgeWeights())
+      return TTAttr;
 
     if (TI->getNumSuccessors() == 1)
       return TTAttr + "penwidth=2";

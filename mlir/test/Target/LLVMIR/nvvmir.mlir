@@ -80,18 +80,6 @@ llvm.func @llvm_nvvm_barrier0() {
   llvm.return
 }
 
-// CHECK-LABEL: @llvm_nvvm_barrier(
-// CHECK-SAME: i32 %[[barId:.*]], i32 %[[numThreads:.*]])
-llvm.func @llvm_nvvm_barrier(%barID : i32, %numberOfThreads : i32) {
-  // CHECK: call void @llvm.nvvm.barrier0()
-  nvvm.barrier 
-  // CHECK: call void @llvm.nvvm.barrier.n(i32 %[[barId]])
-  nvvm.barrier id = %barID
-  // CHECK: call void @llvm.nvvm.barrier(i32 %[[barId]], i32 %[[numThreads]])
-  nvvm.barrier id = %barID number_of_threads = %numberOfThreads
-  llvm.return
-}
-
 // CHECK-LABEL: @llvm_nvvm_cluster_arrive
 llvm.func @llvm_nvvm_cluster_arrive() {
   // CHECK: call void @llvm.nvvm.barrier.cluster.arrive()
@@ -525,13 +513,6 @@ llvm.func @kernel_func() attributes {nvvm.kernel, nvvm.maxntid = array<i32: 1, 2
 // CHECK:     {ptr @kernel_func, !"minctasm", i32 16}
 
 // -----
-
-llvm.func @kernel_func(%numberOfThreads : i32) {
-  // expected-error @below {{'nvvm.barrier' op barrier id is missing, it should be set between 0 to 15}}
-  nvvm.barrier number_of_threads = %numberOfThreads
-}
-
-// -----
 // expected-error @below {{'"nvvm.minctasm"' attribute must be integer constant}}
 llvm.func @kernel_func() attributes {nvvm.kernel,
 nvvm.minctasm = "foo"} {
@@ -557,57 +538,3 @@ llvm.func @kernel_func() attributes {nvvm.kernel, nvvm.maxntid = array<i32: 3, 4
   llvm.return
 }
 
-// -----
-// CHECK: !nvvm.annotations =
-// CHECK: !1 = !{ptr @kernel_func, !"grid_constant", !2}
-// CHECK: !2 = !{i32 1}
-// CHECK: !3 = !{ptr @kernel_func, !"kernel", i32 1}
-llvm.func @kernel_func(%arg0: !llvm.ptr {llvm.byval = i32, nvvm.grid_constant}) attributes {nvvm.kernel} {
-  llvm.return
-}
-
-// -----
-// CHECK: !nvvm.annotations =
-// CHECK: !1 = !{ptr @kernel_func, !"grid_constant", !2}
-// CHECK: !2 = !{i32 1, i32 3}
-// CHECK: !3 = !{ptr @kernel_func, !"kernel", i32 1}
-llvm.func @kernel_func(%arg0: !llvm.ptr {llvm.byval = i32, nvvm.grid_constant}, %arg1: f32, %arg2: !llvm.ptr {llvm.byval = f32, nvvm.grid_constant}) attributes {nvvm.kernel} {
-  llvm.return
-}
-
-
-// -----
-// CHECK-LABEL: @nvvm_fence_proxy_tensormap_generic_release
-llvm.func @nvvm_fence_proxy_tensormap_generic_release() {
-  %c128 = llvm.mlir.constant(128) : i32
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.release.cta()
-  nvvm.fence.proxy.release #nvvm.mem_scope<cta>
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.release.cluster()
-  nvvm.fence.proxy.release #nvvm.mem_scope<cluster>
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.release.gpu()
-  nvvm.fence.proxy.release #nvvm.mem_scope<gpu>
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.release.sys()
-  nvvm.fence.proxy.release #nvvm.mem_scope<sys>
-  llvm.return
-}
-
-// -----
-// CHECK-LABEL: @nvvm_fence_proxy_tensormap_generic_acquire
-llvm.func @nvvm_fence_proxy_tensormap_generic_acquire(%addr : !llvm.ptr) {
-  %c128 = llvm.mlir.constant(128) : i32
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.acquire.cta(ptr {{%[0-9]+}}, i32 128)
-  nvvm.fence.proxy.acquire #nvvm.mem_scope<cta> %addr, %c128
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.acquire.cluster(ptr {{%[0-9]+}}, i32 128)
-  nvvm.fence.proxy.acquire #nvvm.mem_scope<cluster> %addr, %c128
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.acquire.gpu(ptr {{%[0-9]+}}, i32 128)
-  nvvm.fence.proxy.acquire #nvvm.mem_scope<gpu> %addr, %c128
-
-  // CHECK: call void @llvm.nvvm.fence.proxy.tensormap_generic.acquire.sys(ptr {{%[0-9]+}}, i32 128)
-  nvvm.fence.proxy.acquire #nvvm.mem_scope<sys> %addr, %c128
-  llvm.return
-}

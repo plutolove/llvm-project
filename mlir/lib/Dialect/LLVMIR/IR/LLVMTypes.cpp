@@ -154,14 +154,14 @@ bool LLVMArrayType::isValidElementType(Type type) {
       type);
 }
 
-LLVMArrayType LLVMArrayType::get(Type elementType, uint64_t numElements) {
+LLVMArrayType LLVMArrayType::get(Type elementType, unsigned numElements) {
   assert(elementType && "expected non-null subtype");
   return Base::get(elementType.getContext(), elementType, numElements);
 }
 
 LLVMArrayType
 LLVMArrayType::getChecked(function_ref<InFlightDiagnostic()> emitError,
-                          Type elementType, uint64_t numElements) {
+                          Type elementType, unsigned numElements) {
   assert(elementType && "expected non-null subtype");
   return Base::getChecked(emitError, elementType.getContext(), elementType,
                           numElements);
@@ -169,7 +169,7 @@ LLVMArrayType::getChecked(function_ref<InFlightDiagnostic()> emitError,
 
 LogicalResult
 LLVMArrayType::verify(function_ref<InFlightDiagnostic()> emitError,
-                      Type elementType, uint64_t numElements) {
+                      Type elementType, unsigned numElements) {
   if (!isValidElementType(elementType))
     return emitError() << "invalid array element type: " << elementType;
   return success();
@@ -287,22 +287,15 @@ getPointerDataLayoutEntry(DataLayoutEntryListRef params, LLVMPointerType type,
     }
   }
   if (currentEntry) {
-    std::optional<uint64_t> value = extractPointerSpecValue(currentEntry, pos);
-    // If the optional `PtrDLEntryPos::Index` entry is not available, use the
-    // pointer size as the index bitwidth.
-    if (!value && pos == PtrDLEntryPos::Index)
-      value = extractPointerSpecValue(currentEntry, PtrDLEntryPos::Size);
-    bool isSizeOrIndex =
-        pos == PtrDLEntryPos::Size || pos == PtrDLEntryPos::Index;
-    return *value / (isSizeOrIndex ? 1 : kBitsInByte);
+    return *extractPointerSpecValue(currentEntry, pos) /
+           (pos == PtrDLEntryPos::Size ? 1 : kBitsInByte);
   }
 
   // If not found, and this is the pointer to the default memory space, assume
   // 64-bit pointers.
   if (type.getAddressSpace() == 0) {
-    bool isSizeOrIndex =
-        pos == PtrDLEntryPos::Size || pos == PtrDLEntryPos::Index;
-    return isSizeOrIndex ? kDefaultPointerSizeBits : kDefaultPointerAlignment;
+    return pos == PtrDLEntryPos::Size ? kDefaultPointerSizeBits
+                                      : kDefaultPointerAlignment;
   }
 
   return std::nullopt;
@@ -337,16 +330,6 @@ LLVMPointerType::getPreferredAlignment(const DataLayout &dataLayout,
     return *alignment;
 
   return dataLayout.getTypePreferredAlignment(get(getContext()));
-}
-
-std::optional<uint64_t>
-LLVMPointerType::getIndexBitwidth(const DataLayout &dataLayout,
-                                  DataLayoutEntryListRef params) const {
-  if (std::optional<uint64_t> indexBitwidth =
-          getPointerDataLayoutEntry(params, *this, PtrDLEntryPos::Index))
-    return *indexBitwidth;
-
-  return dataLayout.getTypeIndexBitwidth(get(getContext()));
 }
 
 bool LLVMPointerType::areCompatible(DataLayoutEntryListRef oldLayout,
@@ -418,7 +401,8 @@ LogicalResult LLVMPointerType::verifyEntries(DataLayoutEntryListRef entries,
 
 bool LLVMStructType::isValidElementType(Type type) {
   return !llvm::isa<LLVMVoidType, LLVMLabelType, LLVMMetadataType,
-                    LLVMFunctionType, LLVMTokenType>(type);
+                    LLVMFunctionType, LLVMTokenType, LLVMScalableVectorType>(
+      type);
 }
 
 LLVMStructType LLVMStructType::getIdentified(MLIRContext *context,
@@ -491,15 +475,14 @@ ArrayRef<Type> LLVMStructType::getBody() const {
                         : getImpl()->getTypeList();
 }
 
-LogicalResult
-LLVMStructType::verifyInvariants(function_ref<InFlightDiagnostic()>, StringRef,
-                                 bool) {
+LogicalResult LLVMStructType::verify(function_ref<InFlightDiagnostic()>,
+                                     StringRef, bool) {
   return success();
 }
 
 LogicalResult
-LLVMStructType::verifyInvariants(function_ref<InFlightDiagnostic()> emitError,
-                                 ArrayRef<Type> types, bool) {
+LLVMStructType::verify(function_ref<InFlightDiagnostic()> emitError,
+                       ArrayRef<Type> types, bool) {
   for (Type t : types)
     if (!isValidElementType(t))
       return emitError() << "invalid LLVM structure element type: " << t;
@@ -769,6 +752,8 @@ bool mlir::LLVM::isCompatibleOuterType(Type type) {
       Float64Type,
       Float80Type,
       Float128Type,
+      Float8E4M3FNType,
+      Float8E5M2Type,
       LLVMArrayType,
       LLVMFunctionType,
       LLVMLabelType,
@@ -780,7 +765,8 @@ bool mlir::LLVM::isCompatibleOuterType(Type type) {
       LLVMFixedVectorType,
       LLVMScalableVectorType,
       LLVMTargetExtType,
-      LLVMVoidType
+      LLVMVoidType,
+      LLVMX86MMXType
     >(type)) {
     // clang-format on
     return true;
@@ -838,11 +824,14 @@ static bool isCompatibleImpl(Type type, DenseSet<Type> &compatibleTypes) {
             Float64Type,
             Float80Type,
             Float128Type,
+            Float8E4M3FNType,
+            Float8E5M2Type,
             LLVMLabelType,
             LLVMMetadataType,
             LLVMPPCFP128Type,
             LLVMTokenType,
-            LLVMVoidType
+            LLVMVoidType,
+            LLVMX86MMXType
           >([](Type) { return true; })
           // clang-format on
           .Default([](Type) { return false; });
@@ -984,7 +973,8 @@ llvm::TypeSize mlir::LLVM::getPrimitiveTypeSizeInBits(Type type) {
       .Case<BFloat16Type, Float16Type>(
           [](Type) { return llvm::TypeSize::getFixed(16); })
       .Case<Float32Type>([](Type) { return llvm::TypeSize::getFixed(32); })
-      .Case<Float64Type>([](Type) { return llvm::TypeSize::getFixed(64); })
+      .Case<Float64Type, LLVMX86MMXType>(
+          [](Type) { return llvm::TypeSize::getFixed(64); })
       .Case<Float80Type>([](Type) { return llvm::TypeSize::getFixed(80); })
       .Case<Float128Type>([](Type) { return llvm::TypeSize::getFixed(128); })
       .Case<IntegerType>([](IntegerType intTy) {

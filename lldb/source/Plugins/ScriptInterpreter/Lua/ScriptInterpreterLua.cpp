@@ -219,9 +219,8 @@ bool ScriptInterpreterLua::LoadScriptingModule(
     FileSpec extra_search_dir) {
 
   if (llvm::Error e = m_lua->LoadModule(filename)) {
-    error = Status::FromErrorStringWithFormatv(
-        "lua failed to import '{0}': {1}\n", filename,
-        llvm::toString(std::move(e)));
+    error.SetErrorStringWithFormatv("lua failed to import '{0}': {1}\n",
+                                    filename, llvm::toString(std::move(e)));
     return false;
   }
   return true;

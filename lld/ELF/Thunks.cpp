@@ -474,11 +474,10 @@ public:
     assert(!dest.isPreemptible);
     if (std::optional<uint32_t> index =
             in.ppc64LongBranchTarget->addEntry(&dest, addend)) {
-      ctx.mainPart->relaDyn->addRelativeReloc(
-          ctx.target->relativeRel, *in.ppc64LongBranchTarget,
-          *index * UINT64_C(8), dest,
-          addend + getPPC64GlobalEntryToLocalEntryOffset(dest.stOther),
-          ctx.target->symbolicRel, R_ABS);
+      mainPart->relaDyn->addRelativeReloc(
+          target->relativeRel, *in.ppc64LongBranchTarget, *index * UINT64_C(8),
+          dest, addend + getPPC64GlobalEntryToLocalEntryOffset(dest.stOther),
+          target->symbolicRel, R_ABS);
     }
   }
 };
@@ -529,7 +528,7 @@ void AArch64Thunk::writeTo(uint8_t *buf) {
   uint64_t s = getAArch64ThunkDestVA(destination, addend);
   uint64_t p = getThunkTargetSym()->getVA();
   write32(buf, 0x14000000); // b S
-  ctx.target->relocateNoSym(buf, R_AARCH64_CALL26, s - p);
+  target->relocateNoSym(buf, R_AARCH64_CALL26, s - p);
 }
 
 // AArch64 long range Thunks.
@@ -542,7 +541,7 @@ void AArch64ABSLongThunk::writeLong(uint8_t *buf) {
   };
   uint64_t s = getAArch64ThunkDestVA(destination, addend);
   memcpy(buf, data, sizeof(data));
-  ctx.target->relocateNoSym(buf + 8, R_AARCH64_ABS64, s);
+  target->relocateNoSym(buf + 8, R_AARCH64_ABS64, s);
 }
 
 void AArch64ABSLongThunk::addSymbols(ThunkSection &isec) {
@@ -567,9 +566,9 @@ void AArch64ADRPThunk::writeLong(uint8_t *buf) {
   uint64_t s = getAArch64ThunkDestVA(destination, addend);
   uint64_t p = getThunkTargetSym()->getVA();
   memcpy(buf, data, sizeof(data));
-  ctx.target->relocateNoSym(buf, R_AARCH64_ADR_PREL_PG_HI21,
-                            getAArch64Page(s) - getAArch64Page(p));
-  ctx.target->relocateNoSym(buf + 4, R_AARCH64_ADD_ABS_LO12_NC, s);
+  target->relocateNoSym(buf, R_AARCH64_ADR_PREL_PG_HI21,
+                        getAArch64Page(s) - getAArch64Page(p));
+  target->relocateNoSym(buf + 4, R_AARCH64_ADD_ABS_LO12_NC, s);
 }
 
 void AArch64ADRPThunk::addSymbols(ThunkSection &isec) {
@@ -610,7 +609,7 @@ void ARMThunk::writeTo(uint8_t *buf) {
   uint64_t p = getThunkTargetSym()->getVA();
   int64_t offset = s - p - 8;
   write32(buf, 0xea000000); // b S
-  ctx.target->relocateNoSym(buf, R_ARM_JUMP24, offset);
+  target->relocateNoSym(buf, R_ARM_JUMP24, offset);
 }
 
 bool ARMThunk::isCompatibleWith(const InputSection &isec,
@@ -654,7 +653,7 @@ void ThumbThunk::writeTo(uint8_t *buf) {
   int64_t offset = s - p - 4;
   write16(buf + 0, 0xf000); // b.w S
   write16(buf + 2, 0xb000);
-  ctx.target->relocateNoSym(buf, R_ARM_THM_JUMP24, offset);
+  target->relocateNoSym(buf, R_ARM_THM_JUMP24, offset);
 }
 
 bool ThumbThunk::isCompatibleWith(const InputSection &isec,
@@ -672,8 +671,8 @@ void ARMV7ABSLongThunk::writeLong(uint8_t *buf) {
   write32(buf + 4, 0xe340c000); // movt ip,:upper16:S
   write32(buf + 8, 0xe12fff1c); // bx   ip
   uint64_t s = getARMThunkDestVA(destination);
-  ctx.target->relocateNoSym(buf, R_ARM_MOVW_ABS_NC, s);
-  ctx.target->relocateNoSym(buf + 4, R_ARM_MOVT_ABS, s);
+  target->relocateNoSym(buf, R_ARM_MOVW_ABS_NC, s);
+  target->relocateNoSym(buf + 4, R_ARM_MOVT_ABS, s);
 }
 
 void ARMV7ABSLongThunk::addSymbols(ThunkSection &isec) {
@@ -689,8 +688,8 @@ void ThumbV7ABSLongThunk::writeLong(uint8_t *buf) {
   write16(buf + 6, 0x0c00);
   write16(buf + 8, 0x4760); // bx   ip
   uint64_t s = getARMThunkDestVA(destination);
-  ctx.target->relocateNoSym(buf, R_ARM_THM_MOVW_ABS_NC, s);
-  ctx.target->relocateNoSym(buf + 4, R_ARM_THM_MOVT_ABS, s);
+  target->relocateNoSym(buf, R_ARM_THM_MOVW_ABS_NC, s);
+  target->relocateNoSym(buf + 4, R_ARM_THM_MOVT_ABS, s);
 }
 
 void ThumbV7ABSLongThunk::addSymbols(ThunkSection &isec) {
@@ -707,8 +706,8 @@ void ARMV7PILongThunk::writeLong(uint8_t *buf) {
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA();
   int64_t offset = s - p - 16;
-  ctx.target->relocateNoSym(buf, R_ARM_MOVW_PREL_NC, offset);
-  ctx.target->relocateNoSym(buf + 4, R_ARM_MOVT_PREL, offset);
+  target->relocateNoSym(buf, R_ARM_MOVW_PREL_NC, offset);
+  target->relocateNoSym(buf + 4, R_ARM_MOVT_PREL, offset);
 }
 
 void ARMV7PILongThunk::addSymbols(ThunkSection &isec) {
@@ -727,8 +726,8 @@ void ThumbV7PILongThunk::writeLong(uint8_t *buf) {
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
   int64_t offset = s - p - 12;
-  ctx.target->relocateNoSym(buf, R_ARM_THM_MOVW_PREL_NC, offset);
-  ctx.target->relocateNoSym(buf + 4, R_ARM_THM_MOVT_PREL, offset);
+  target->relocateNoSym(buf, R_ARM_THM_MOVW_PREL_NC, offset);
+  target->relocateNoSym(buf + 4, R_ARM_THM_MOVT_PREL, offset);
 }
 
 void ThumbV7PILongThunk::addSymbols(ThunkSection &isec) {
@@ -748,7 +747,7 @@ void ThumbV6MABSLongThunk::writeLong(uint8_t *buf) {
   write16(buf + 6, 0xbd01);   // pop {r0, pc} ; restore r0 and branch to dest
   write32(buf + 8, 0x00000000);   // L1: .word S
   uint64_t s = getARMThunkDestVA(destination);
-  ctx.target->relocateNoSym(buf + 8, R_ARM_ABS32, s);
+  target->relocateNoSym(buf + 8, R_ARM_ABS32, s);
 }
 
 void ThumbV6MABSLongThunk::addSymbols(ThunkSection &isec) {
@@ -775,10 +774,10 @@ void ThumbV6MABSXOLongThunk::writeLong(uint8_t *buf) {
   write16(buf + 16, 0x9001); // str r0, [sp, #4] ; SP + 4 = S
   write16(buf + 18, 0xbd01); // pop {r0, pc} ; restore r0 and branch to dest
   uint64_t s = getARMThunkDestVA(destination);
-  ctx.target->relocateNoSym(buf + 2, R_ARM_THM_ALU_ABS_G3, s);
-  ctx.target->relocateNoSym(buf + 6, R_ARM_THM_ALU_ABS_G2_NC, s);
-  ctx.target->relocateNoSym(buf + 10, R_ARM_THM_ALU_ABS_G1_NC, s);
-  ctx.target->relocateNoSym(buf + 14, R_ARM_THM_ALU_ABS_G0_NC, s);
+  target->relocateNoSym(buf + 2, R_ARM_THM_ALU_ABS_G3, s);
+  target->relocateNoSym(buf + 6, R_ARM_THM_ALU_ABS_G2_NC, s);
+  target->relocateNoSym(buf + 10, R_ARM_THM_ALU_ABS_G1_NC, s);
+  target->relocateNoSym(buf + 14, R_ARM_THM_ALU_ABS_G0_NC, s);
 }
 
 void ThumbV6MABSXOLongThunk::addSymbols(ThunkSection &isec) {
@@ -800,7 +799,7 @@ void ThumbV6MPILongThunk::writeLong(uint8_t *buf) {
   write32(buf + 12, 0x00000000);  // L2: .word S - (P + (L1 - P) + 4)
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
-  ctx.target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 12);
+  target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 12);
 }
 
 void ThumbV6MPILongThunk::addSymbols(ThunkSection &isec) {
@@ -814,8 +813,7 @@ void ThumbV6MPILongThunk::addSymbols(ThunkSection &isec) {
 void ARMV5LongLdrPcThunk::writeLong(uint8_t *buf) {
   write32(buf + 0, 0xe51ff004); // ldr pc, [pc,#-4] ; L1
   write32(buf + 4, 0x00000000); // L1: .word S
-  ctx.target->relocateNoSym(buf + 4, R_ARM_ABS32,
-                            getARMThunkDestVA(destination));
+  target->relocateNoSym(buf + 4, R_ARM_ABS32, getARMThunkDestVA(destination));
 }
 
 void ARMV5LongLdrPcThunk::addSymbols(ThunkSection &isec) {
@@ -830,8 +828,7 @@ void ARMV4ABSLongBXThunk::writeLong(uint8_t *buf) {
   write32(buf + 0, 0xe59fc000); // ldr r12, [pc] ; L1
   write32(buf + 4, 0xe12fff1c); // bx r12
   write32(buf + 8, 0x00000000); // L1: .word S
-  ctx.target->relocateNoSym(buf + 8, R_ARM_ABS32,
-                            getARMThunkDestVA(destination));
+  target->relocateNoSym(buf + 8, R_ARM_ABS32, getARMThunkDestVA(destination));
 }
 
 void ARMV4ABSLongBXThunk::addSymbols(ThunkSection &isec) {
@@ -847,8 +844,7 @@ void ThumbV4ABSLongBXThunk::writeLong(uint8_t *buf) {
   write16(buf + 2, 0xe7fd); // b #-6 ; Arm recommended sequence to follow bx pc
   write32(buf + 4, 0xe51ff004); // ldr pc, [pc, #-4] ; L1
   write32(buf + 8, 0x00000000); // L1: .word S
-  ctx.target->relocateNoSym(buf + 8, R_ARM_ABS32,
-                            getARMThunkDestVA(destination));
+  target->relocateNoSym(buf + 8, R_ARM_ABS32, getARMThunkDestVA(destination));
 }
 
 void ThumbV4ABSLongBXThunk::addSymbols(ThunkSection &isec) {
@@ -866,8 +862,7 @@ void ThumbV4ABSLongThunk::writeLong(uint8_t *buf) {
   write32(buf + 4, 0xe59fc000); // ldr r12, [pc] ; L1
   write32(buf + 8, 0xe12fff1c); // bx r12
   write32(buf + 12, 0x00000000); // L1: .word S
-  ctx.target->relocateNoSym(buf + 12, R_ARM_ABS32,
-                            getARMThunkDestVA(destination));
+  target->relocateNoSym(buf + 12, R_ARM_ABS32, getARMThunkDestVA(destination));
 }
 
 void ThumbV4ABSLongThunk::addSymbols(ThunkSection &isec) {
@@ -886,7 +881,7 @@ void ARMV4PILongBXThunk::writeLong(uint8_t *buf) {
   write32(buf + 12, 0x00000000); // L2: .word S - (P + (L1 - P) + 8)
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
-  ctx.target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 12);
+  target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 12);
 }
 
 void ARMV4PILongBXThunk::addSymbols(ThunkSection &isec) {
@@ -903,7 +898,7 @@ void ARMV4PILongThunk::writeLong(uint8_t *buf) {
   write32(buf + 8, 0x00000000); // L2: .word S - (P + (L1 - P) + 8)
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
-  ctx.target->relocateNoSym(buf + 8, R_ARM_REL32, s - p - 12);
+  target->relocateNoSym(buf + 8, R_ARM_REL32, s - p - 12);
 }
 
 void ARMV4PILongThunk::addSymbols(ThunkSection &isec) {
@@ -922,7 +917,7 @@ void ThumbV4PILongBXThunk::writeLong(uint8_t *buf) {
   write32(buf + 12, 0x00000000); // L2: .word S - (P + (L1 - P) + 8)
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
-  ctx.target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 16);
+  target->relocateNoSym(buf + 12, R_ARM_REL32, s - p - 16);
 }
 
 void ThumbV4PILongBXThunk::addSymbols(ThunkSection &isec) {
@@ -943,7 +938,7 @@ void ThumbV4PILongThunk::writeLong(uint8_t *buf) {
   write32(buf + 16, 0x00000000); // L2: .word S - (P + (L1 - P) + 8)
   uint64_t s = getARMThunkDestVA(destination);
   uint64_t p = getThunkTargetSym()->getVA() & ~0x1;
-  ctx.target->relocateNoSym(buf + 16, R_ARM_REL32, s - p - 16);
+  target->relocateNoSym(buf + 16, R_ARM_REL32, s - p - 16);
 }
 
 void ThumbV4PILongThunk::addSymbols(ThunkSection &isec) {
@@ -958,7 +953,7 @@ void ThumbV4PILongThunk::addSymbols(ThunkSection &isec) {
 // Use the long jump which covers a range up to 8MiB.
 void AVRThunk::writeTo(uint8_t *buf) {
   write32(buf, 0x940c); // jmp func
-  ctx.target->relocateNoSym(buf, R_AVR_CALL, destination.getVA());
+  target->relocateNoSym(buf, R_AVR_CALL, destination.getVA());
 }
 
 void AVRThunk::addSymbols(ThunkSection &isec) {
@@ -973,8 +968,8 @@ void MipsThunk::writeTo(uint8_t *buf) {
   write32(buf + 4, 0x08000000 | (s >> 2)); // j     func
   write32(buf + 8, 0x27390000); // addiu $25, $25, %lo(func)
   write32(buf + 12, 0x00000000); // nop
-  ctx.target->relocateNoSym(buf, R_MIPS_HI16, s);
-  ctx.target->relocateNoSym(buf + 8, R_MIPS_LO16, s);
+  target->relocateNoSym(buf, R_MIPS_HI16, s);
+  target->relocateNoSym(buf + 8, R_MIPS_LO16, s);
 }
 
 void MipsThunk::addSymbols(ThunkSection &isec) {
@@ -995,9 +990,9 @@ void MicroMipsThunk::writeTo(uint8_t *buf) {
   write16(buf + 4, 0xd400);   // j     func
   write16(buf + 8, 0x3339);   // addiu $25, $25, %lo(func)
   write16(buf + 12, 0x0c00);  // nop
-  ctx.target->relocateNoSym(buf, R_MICROMIPS_HI16, s);
-  ctx.target->relocateNoSym(buf + 4, R_MICROMIPS_26_S1, s);
-  ctx.target->relocateNoSym(buf + 8, R_MICROMIPS_LO16, s);
+  target->relocateNoSym(buf, R_MICROMIPS_HI16, s);
+  target->relocateNoSym(buf + 4, R_MICROMIPS_26_S1, s);
+  target->relocateNoSym(buf + 8, R_MICROMIPS_LO16, s);
 }
 
 void MicroMipsThunk::addSymbols(ThunkSection &isec) {
@@ -1020,9 +1015,9 @@ void MicroMipsR6Thunk::writeTo(uint8_t *buf) {
   write16(buf, 0x1320);       // lui   $25, %hi(func)
   write16(buf + 4, 0x3339);   // addiu $25, $25, %lo(func)
   write16(buf + 8, 0x9400);   // bc    func
-  ctx.target->relocateNoSym(buf, R_MICROMIPS_HI16, s);
-  ctx.target->relocateNoSym(buf + 4, R_MICROMIPS_LO16, s);
-  ctx.target->relocateNoSym(buf + 8, R_MICROMIPS_PC26_S1, s - p - 12);
+  target->relocateNoSym(buf, R_MICROMIPS_HI16, s);
+  target->relocateNoSym(buf + 4, R_MICROMIPS_LO16, s);
+  target->relocateNoSym(buf + 8, R_MICROMIPS_PC26_S1, s - p - 12);
 }
 
 void MicroMipsR6Thunk::addSymbols(ThunkSection &isec) {
@@ -1343,7 +1338,7 @@ static Thunk *addThunkV6M(const InputSection &isec, RelType reloc, Symbol &s,
         return make<ThumbV6MPILongThunk>(s, a);
 
       fatal("relocation " + toString(reloc) + " to " + toString(s) +
-            " not supported for Armv6-M targets for position independent"
+            " not supported for Armv6-M targets for position independant"
             " and execute only code");
     }
     if (isPureCode)

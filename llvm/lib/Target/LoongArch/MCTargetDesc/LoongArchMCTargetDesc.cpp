@@ -65,7 +65,7 @@ static MCAsmInfo *createLoongArchMCAsmInfo(const MCRegisterInfo &MRI,
   MCAsmInfo *MAI = new LoongArchMCAsmInfo(TT);
 
   // Initial state of the frame pointer is sp(r3).
-  unsigned SP = MRI.getDwarfRegNum(LoongArch::R3, true);
+  MCRegister SP = MRI.getDwarfRegNum(LoongArch::R3, true);
   MCCFIInstruction Inst = MCCFIInstruction::cfiDefCfa(nullptr, SP, 0);
   MAI->addInitialFrameState(Inst);
 
@@ -193,9 +193,10 @@ namespace {
 MCStreamer *createLoongArchELFStreamer(const Triple &T, MCContext &Context,
                                        std::unique_ptr<MCAsmBackend> &&MAB,
                                        std::unique_ptr<MCObjectWriter> &&MOW,
-                                       std::unique_ptr<MCCodeEmitter> &&MCE) {
+                                       std::unique_ptr<MCCodeEmitter> &&MCE,
+                                       bool RelaxAll) {
   return createLoongArchELFStreamer(Context, std::move(MAB), std::move(MOW),
-                                    std::move(MCE));
+                                    std::move(MCE), RelaxAll);
 }
 } // end namespace
 

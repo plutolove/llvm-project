@@ -21,6 +21,7 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Support/LLVM.h"
+#include "mlir/Support/LogicalResult.h"
 #include "llvm/Support/Casting.h"
 #include <cassert>
 #include <optional>
@@ -46,20 +47,17 @@ void Executable::print(raw_ostream &os) const {
 void Executable::onUpdate(DataFlowSolver *solver) const {
   AnalysisState::onUpdate(solver);
 
-  if (ProgramPoint pp = llvm::dyn_cast_if_present<ProgramPoint>(anchor)) {
-    if (Block *block = llvm::dyn_cast_if_present<Block *>(pp)) {
-      // Re-invoke the analyses on the block itself.
-      for (DataFlowAnalysis *analysis : subscribers)
-        solver->enqueue({block, analysis});
-      // Re-invoke the analyses on all operations in the block.
-      for (DataFlowAnalysis *analysis : subscribers)
-        for (Operation &op : *block)
-          solver->enqueue({&op, analysis});
-    }
-  } else if (auto *latticeAnchor =
-                 llvm::dyn_cast_if_present<GenericLatticeAnchor *>(anchor)) {
+  if (auto *block = llvm::dyn_cast_if_present<Block *>(point)) {
+    // Re-invoke the analyses on the block itself.
+    for (DataFlowAnalysis *analysis : subscribers)
+      solver->enqueue({block, analysis});
+    // Re-invoke the analyses on all operations in the block.
+    for (DataFlowAnalysis *analysis : subscribers)
+      for (Operation &op : *block)
+        solver->enqueue({&op, analysis});
+  } else if (auto *programPoint = llvm::dyn_cast_if_present<GenericProgramPoint *>(point)) {
     // Re-invoke the analysis on the successor block.
-    if (auto *edge = dyn_cast<CFGEdge>(latticeAnchor)) {
+    if (auto *edge = dyn_cast<CFGEdge>(programPoint)) {
       for (DataFlowAnalysis *analysis : subscribers)
         solver->enqueue({edge->getTo(), analysis});
     }
@@ -117,7 +115,7 @@ void CFGEdge::print(raw_ostream &os) const {
 
 DeadCodeAnalysis::DeadCodeAnalysis(DataFlowSolver &solver)
     : DataFlowAnalysis(solver) {
-  registerAnchorKind<CFGEdge>();
+  registerPointKind<CFGEdge>();
 }
 
 LogicalResult DeadCodeAnalysis::initialize(Operation *top) {
@@ -221,8 +219,7 @@ LogicalResult DeadCodeAnalysis::initializeRecursively(Operation *op) {
 void DeadCodeAnalysis::markEdgeLive(Block *from, Block *to) {
   auto *state = getOrCreate<Executable>(to);
   propagateIfChanged(state, state->setToLive());
-  auto *edgeState =
-      getOrCreate<Executable>(getLatticeAnchor<CFGEdge>(from, to));
+  auto *edgeState = getOrCreate<Executable>(getProgramPoint<CFGEdge>(from, to));
   propagateIfChanged(edgeState, edgeState->setToLive());
 }
 
@@ -238,7 +235,9 @@ void DeadCodeAnalysis::markEntryBlocksLive(Operation *op) {
 LogicalResult DeadCodeAnalysis::visit(ProgramPoint point) {
   if (point.is<Block *>())
     return success();
-  auto *op = point.get<Operation *>();
+  auto *op = llvm::dyn_cast_if_present<Operation *>(point);
+  if (!op)
+    return emitError(point.getLoc(), "unknown program point kind");
 
   // If the parent block is not executable, there is nothing to do.
   if (!getOrCreate<Executable>(op->getBlock())->isLive())

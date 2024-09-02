@@ -76,7 +76,7 @@ DynamicLoader *DynamicLoaderMacOSXDYLD::CreateInstance(Process *process,
       case llvm::Triple::TvOS:
       case llvm::Triple::WatchOS:
       case llvm::Triple::XROS:
-      case llvm::Triple::BridgeOS:
+      // NEED_BRIDGEOS_TRIPLE case llvm::Triple::BridgeOS:
         create = triple_ref.getVendor() == llvm::Triple::Apple;
         break;
       default:
@@ -1060,7 +1060,7 @@ Status DynamicLoaderMacOSXDYLD::CanLoadImage() {
       return error; // Success
   }
 
-  error = Status::FromErrorString("unsafe to load or unload shared libraries");
+  error.SetErrorString("unsafe to load or unload shared libraries");
   return error;
 }
 

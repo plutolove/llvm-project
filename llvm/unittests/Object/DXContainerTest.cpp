@@ -174,51 +174,6 @@ TEST(DXCFile, ParseEmptyParts) {
   }
 }
 
-// This test verify DXIL part are correctly parsed.
-// This test is based on the binary output constructed from this yaml.
-// --- !dxcontainer
-// Header:
-//   Hash:            [ 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
-//                      0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
-//   Version:
-//     Major:           1
-//     Minor:           0
-//   PartCount:       1
-// Parts:
-//   - Name:            DXIL
-//     Size:            28
-//     Program:
-//       MajorVersion:    6
-//       MinorVersion:    5
-//       ShaderKind:      5
-//       Size:            8
-//       DXILMajorVersion: 1
-//       DXILMinorVersion: 5
-//       DXILSize:        4
-//       DXIL:            [ 0x42, 0x43, 0xC0, 0xDE, ]
-// ...
-TEST(DXCFile, ParseDXILPart) {
-  uint8_t Buffer[] = {
-      0x44, 0x58, 0x42, 0x43, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-      0x48, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x24, 0x00, 0x00, 0x00,
-      0x44, 0x58, 0x49, 0x4c, 0x1c, 0x00, 0x00, 0x00, 0x65, 0x00, 0x05, 0x00,
-      0x08, 0x00, 0x00, 0x00, 0x44, 0x58, 0x49, 0x4c, 0x05, 0x01, 0x00, 0x00,
-      0x10, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x42, 0x43, 0xc0, 0xde};
-  DXContainer C =
-      llvm::cantFail(DXContainer::create(getMemoryBuffer<116>(Buffer)));
-  EXPECT_EQ(C.getHeader().PartCount, 1u);
-  const std::optional<object::DXContainer::DXILData> &DXIL = C.getDXIL();
-  EXPECT_TRUE(DXIL.has_value());
-  dxbc::ProgramHeader Header = DXIL->first;
-  EXPECT_EQ(Header.getMajorVersion(), 6u);
-  EXPECT_EQ(Header.getMinorVersion(), 5u);
-  EXPECT_EQ(Header.ShaderKind, 5u);
-  EXPECT_EQ(Header.Size, 8u);
-  EXPECT_EQ(Header.Bitcode.MajorVersion, 1u);
-  EXPECT_EQ(Header.Bitcode.MinorVersion, 5u);
-}
-
 static Expected<DXContainer>
 generateDXContainer(StringRef Yaml, SmallVectorImpl<char> &BinaryData) {
   DXContainerYAML::Object Obj;
@@ -266,15 +221,15 @@ Parts:
       MaximumWaveLaneCount: 4294967295
       ResourceStride:  16
       Resources:
-        - Type:            Sampler
+        - Type:            1
           Space:           1
           LowerBound:      1
           UpperBound:      1
-        - Type:            CBV
+        - Type:            2
           Space:           2
           LowerBound:      2
           UpperBound:      2
-        - Type:            SRVTyped
+        - Type:            3
           Space:           3
           LowerBound:      3
           UpperBound:      3
@@ -285,8 +240,8 @@ Parts:
       MinorVersion:    0
       ShaderKind:      14
       Size:            6
-      DXILMajorVersion: 1
-      DXILMinorVersion: 0
+      DXILMajorVersion: 0
+      DXILMinorVersion: 1
       DXILSize:        0
 ...
 )";
@@ -308,13 +263,13 @@ Parts:
   dxbc::PSV::v2::ResourceBindInfo Binding;
 
   Binding = *It;
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   ++It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::CBV);
+  EXPECT_EQ(Binding.Type, 2u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   --It;
@@ -322,25 +277,25 @@ Parts:
 
   EXPECT_TRUE(It == PSVInfo->getResources().begin());
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   --It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   ++It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::CBV);
+  EXPECT_EQ(Binding.Type, 2u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   ++It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::SRVTyped);
+  EXPECT_EQ(Binding.Type, 3u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   EXPECT_FALSE(It == PSVInfo->getResources().end());
@@ -351,7 +306,7 @@ Parts:
   EXPECT_TRUE(It == PSVInfo->getResources().end());
   EXPECT_FALSE(It != PSVInfo->getResources().end());
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Invalid);
+  EXPECT_EQ(Binding.Type, 0u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   {
@@ -361,7 +316,7 @@ Parts:
     EXPECT_TRUE(Old == PSVInfo->getResources().end());
     EXPECT_FALSE(Old != PSVInfo->getResources().end());
 
-    EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Invalid);
+    EXPECT_EQ(Binding.Type, 0u);
     EXPECT_EQ(Binding.Flags, 0u);
   }
 
@@ -369,7 +324,7 @@ Parts:
 
   EXPECT_TRUE(It == PSVInfo->getResources().end());
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Invalid);
+  EXPECT_EQ(Binding.Type, 0u);
   EXPECT_EQ(Binding.Flags, 0u);
 
   {
@@ -377,13 +332,13 @@ Parts:
     Binding = *Old;
     EXPECT_TRUE(Old == PSVInfo->getResources().end());
 
-    EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Invalid);
+    EXPECT_EQ(Binding.Type, 0u);
     EXPECT_EQ(Binding.Flags, 0u);
   }
 
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::SRVTyped);
+  EXPECT_EQ(Binding.Type, 3u);
   EXPECT_EQ(Binding.Flags, 0u);
 }
 
@@ -406,8 +361,8 @@ Parts:
 //       MinorVersion:    0
 //       ShaderKind:      14
 //       Size:            6
-//       DXILMajorVersion: 1
-//       DXILMinorVersion: 0
+//       DXILMajorVersion: 0
+//       DXILMinorVersion: 1
 //       DXILSize:        0
 //   - Name:            PSV0
 //     Size:            36
@@ -522,7 +477,7 @@ TEST(DXCFile, MaliciousFiles) {
 //
 // --- !dxcontainer
 // Header:
-//   Hash:            [ 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+//   Hash:            [ 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
 //                      0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
 //   Version:
 //     Major:           1
@@ -536,8 +491,8 @@ TEST(DXCFile, MaliciousFiles) {
 //       MinorVersion:    0
 //       ShaderKind:      14
 //       Size:            6
-//       DXILMajorVersion: 1
-//       DXILMinorVersion: 0
+//       DXILMajorVersion: 0
+//       DXILMinorVersion: 1
 //       DXILSize:        0
 //   - Name:            PSV0
 //     Size:            100
@@ -587,7 +542,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
   dxbc::PSV::v2::ResourceBindInfo Binding;
 
   Binding = *It;
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Space, 2u);
   EXPECT_EQ(Binding.LowerBound, 3u);
   EXPECT_EQ(Binding.UpperBound, 4u);
@@ -595,7 +550,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
   ++It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::SRVStructured);
+  EXPECT_EQ(Binding.Type, 5u);
   EXPECT_EQ(Binding.Space, 6u);
   EXPECT_EQ(Binding.LowerBound, 7u);
   EXPECT_EQ(Binding.UpperBound, 8u);
@@ -605,7 +560,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
 
   EXPECT_TRUE(It == PSVInfo->getResources().begin());
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Space, 2u);
   EXPECT_EQ(Binding.LowerBound, 3u);
   EXPECT_EQ(Binding.UpperBound, 4u);
@@ -613,7 +568,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
   --It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Sampler);
+  EXPECT_EQ(Binding.Type, 1u);
   EXPECT_EQ(Binding.Space, 2u);
   EXPECT_EQ(Binding.LowerBound, 3u);
   EXPECT_EQ(Binding.UpperBound, 4u);
@@ -621,7 +576,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
   ++It;
   Binding = *It;
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::SRVStructured);
+  EXPECT_EQ(Binding.Type, 5u);
   EXPECT_EQ(Binding.Space, 6u);
   EXPECT_EQ(Binding.LowerBound, 7u);
   EXPECT_EQ(Binding.UpperBound, 8u);;
@@ -635,7 +590,7 @@ TEST(DXCFile, PSVResourceIteratorsStride) {
   EXPECT_TRUE(It == PSVInfo->getResources().end());
   EXPECT_FALSE(It != PSVInfo->getResources().end());
 
-  EXPECT_EQ(Binding.Type, dxbc::PSV::ResourceType::Invalid);
+  EXPECT_EQ(Binding.Type, 0u);
   EXPECT_EQ(Binding.Flags, 0u);
 }
 

@@ -26,9 +26,7 @@ add_llvm_unittest(OrcJITTests
   JITTargetMachineBuilderTest.cpp
   LazyCallThroughAndReexportsTest.cpp
   LookupAndRecordAddrsTest.cpp
-  MachOPlatformTest.cpp
   MapperJITLinkMemoryManagerTest.cpp
-  MemoryFlagsTest.cpp
   MemoryMapperTest.cpp
   ObjectFormatsTest.cpp
   ObjectLinkingLayerTest.cpp
@@ -43,10 +41,12 @@ add_llvm_unittest(OrcJITTests
   TaskDispatchTest.cpp
   ThreadSafeModuleTest.cpp
   WrapperFunctionUtilsTest.cpp
-
-  EXPORT_SYMBOLS
   )
 
 target_link_libraries(OrcJITTests PRIVATE
                         LLVMTestingSupport
                         ${ORC_JIT_TEST_LIBS})
+
+set_property(TARGET OrcJITTests PROPERTY FOLDER "Tests/UnitTests/ExecutionTests")
+
+export_executable_symbols(OrcJITTests)

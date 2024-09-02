@@ -12,22 +12,21 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Analysis/StructuralHash.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/StructuralHash.h"
-#include "llvm/Support/Format.h"
+#include "llvm/Support/CommandLine.h"
 
 using namespace llvm;
 
 PreservedAnalyses StructuralHashPrinterPass::run(Module &M,
                                                  ModuleAnalysisManager &MAM) {
   OS << "Module Hash: "
-     << format("%016" PRIx64, StructuralHash(M, EnableDetailedStructuralHash))
+     << Twine::utohexstr(StructuralHash(M, EnableDetailedStructuralHash))
      << "\n";
   for (Function &F : M) {
     if (F.isDeclaration())
       continue;
     OS << "Function " << F.getName() << " Hash: "
-       << format("%016" PRIx64, StructuralHash(F, EnableDetailedStructuralHash))
+       << Twine::utohexstr(StructuralHash(F, EnableDetailedStructuralHash))
        << "\n";
   }
   return PreservedAnalyses::all();

@@ -19,6 +19,7 @@
 #include "DemangleConfig.h"
 #include "StringViewExtras.h"
 #include "Utility.h"
+#include <__cxxabi_config.h>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -30,7 +31,7 @@
 #include <type_traits>
 #include <utility>
 
-#if defined(__clang__)
+#ifdef _LIBCXXABI_COMPILER_CLANG
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-template"
 #endif
@@ -38,12 +39,13 @@
 DEMANGLE_NAMESPACE_BEGIN
 
 template <class T, size_t N> class PODSmallVector {
-  static_assert(std::is_trivial<T>::value,
-                "T is required to be a trivial type");
+  static_assert(std::is_pod<T>::value,
+                "T is required to be a plain old data type");
+
   T *First = nullptr;
   T *Last = nullptr;
   T *Cap = nullptr;
-  T Inline[N] = {};
+  T Inline[N] = {0};
 
   bool isInline() const { return First == Inline; }
 
@@ -199,7 +201,8 @@ private:
 
   Prec Precedence : 6;
 
-protected:
+  // FIXME: Make these protected.
+public:
   /// Tracks if this node has a component on its right side, in which case we
   /// need to call printRight.
   Cache RHSComponentCache : 2;
@@ -253,9 +256,6 @@ public:
   Kind getKind() const { return K; }
 
   Prec getPrecedence() const { return Precedence; }
-  Cache getRHSComponentCache() const { return RHSComponentCache; }
-  Cache getArrayCache() const { return ArrayCache; }
-  Cache getFunctionCache() const { return FunctionCache; }
 
   virtual bool hasRHSComponentSlow(OutputBuffer &) const { return false; }
   virtual bool hasArraySlow(OutputBuffer &) const { return false; }
@@ -425,8 +425,8 @@ protected:
 
 public:
   QualType(const Node *Child_, Qualifiers Quals_)
-      : Node(KQualType, Child_->getRHSComponentCache(), Child_->getArrayCache(),
-             Child_->getFunctionCache()),
+      : Node(KQualType, Child_->RHSComponentCache,
+             Child_->ArrayCache, Child_->FunctionCache),
         Quals(Quals_), Child(Child_) {}
 
   Qualifiers getQuals() const { return Quals; }
@@ -555,8 +555,8 @@ struct AbiTagAttr : Node {
   std::string_view Tag;
 
   AbiTagAttr(Node *Base_, std::string_view Tag_)
-      : Node(KAbiTagAttr, Base_->getRHSComponentCache(), Base_->getArrayCache(),
-             Base_->getFunctionCache()),
+      : Node(KAbiTagAttr, Base_->RHSComponentCache, Base_->ArrayCache,
+             Base_->FunctionCache),
         Base(Base_), Tag(Tag_) {}
 
   template<typename Fn> void match(Fn F) const { F(Base, Tag); }
@@ -616,7 +616,7 @@ class PointerType final : public Node {
 
 public:
   PointerType(const Node *Pointee_)
-      : Node(KPointerType, Pointee_->getRHSComponentCache()),
+      : Node(KPointerType, Pointee_->RHSComponentCache),
         Pointee(Pointee_) {}
 
   const Node *getPointee() const { return Pointee; }
@@ -700,7 +700,7 @@ class ReferenceType : public Node {
 
 public:
   ReferenceType(const Node *Pointee_, ReferenceKind RK_)
-      : Node(KReferenceType, Pointee_->getRHSComponentCache()),
+      : Node(KReferenceType, Pointee_->RHSComponentCache),
         Pointee(Pointee_), RK(RK_) {}
 
   template<typename Fn> void match(Fn F) const { F(Pointee, RK); }
@@ -743,7 +743,7 @@ class PointerToMemberType final : public Node {
 
 public:
   PointerToMemberType(const Node *ClassType_, const Node *MemberType_)
-      : Node(KPointerToMemberType, MemberType_->getRHSComponentCache()),
+      : Node(KPointerToMemberType, MemberType_->RHSComponentCache),
         ClassType(ClassType_), MemberType(MemberType_) {}
 
   template<typename Fn> void match(Fn F) const { F(ClassType, MemberType); }
@@ -1384,14 +1384,16 @@ class ParameterPack final : public Node {
 public:
   ParameterPack(NodeArray Data_) : Node(KParameterPack), Data(Data_) {
     ArrayCache = FunctionCache = RHSComponentCache = Cache::Unknown;
-    if (std::all_of(Data.begin(), Data.end(),
-                    [](Node *P) { return P->getArrayCache() == Cache::No; }))
+    if (std::all_of(Data.begin(), Data.end(), [](Node* P) {
+          return P->ArrayCache == Cache::No;
+        }))
       ArrayCache = Cache::No;
-    if (std::all_of(Data.begin(), Data.end(),
-                    [](Node *P) { return P->getFunctionCache() == Cache::No; }))
+    if (std::all_of(Data.begin(), Data.end(), [](Node* P) {
+          return P->FunctionCache == Cache::No;
+        }))
       FunctionCache = Cache::No;
-    if (std::all_of(Data.begin(), Data.end(), [](Node *P) {
-          return P->getRHSComponentCache() == Cache::No;
+    if (std::all_of(Data.begin(), Data.end(), [](Node* P) {
+          return P->RHSComponentCache == Cache::No;
         }))
       RHSComponentCache = Cache::No;
   }
@@ -3318,7 +3320,7 @@ AbstractManglingParser<Derived, Alloc>::parseOperatorEncoding() {
     return nullptr;
 
   // We can't use lower_bound as that can link to symbols in the C++ library,
-  // and this must remain independent of that.
+  // and this must remain independant of that.
   size_t lower = 0u, upper = NumOps - 1; // Inclusive bounds.
   while (upper != lower) {
     size_t middle = (upper + lower) / 2;
@@ -5540,7 +5542,7 @@ Node *AbstractManglingParser<Alloc, Derived>::parseFloatingLiteral() {
     return nullptr;
   std::string_view Data(First, N);
   for (char C : Data)
-    if (!(C >= '0' && C <= '9') && !(C >= 'a' && C <= 'f'))
+    if (!std::isxdigit(C))
       return nullptr;
   First += N;
   if (!consumeIf('E'))
@@ -5714,7 +5716,6 @@ Node *AbstractManglingParser<Derived, Alloc>::parseTemplateParam() {
 }
 
 // <template-param-decl> ::= Ty                          # type parameter
-//                       ::= Tk <concept name> [<template-args>] # constrained type parameter
 //                       ::= Tn <type>                   # non-type parameter
 //                       ::= Tt <template-param-decl>* E # template parameter
 //                       ::= Tp <template-param-decl>    # parameter pack
@@ -5846,7 +5847,7 @@ Node *AbstractManglingParser<Derived, Alloc>::parseTemplateArg() {
   }
 }
 
-// <template-args> ::= I <template-arg>* [Q <requires-clause expr>] E
+// <template-args> ::= I <template-arg>* E
 //     extension, the abi says <template-arg>+
 template <typename Derived, typename Alloc>
 Node *
@@ -5947,7 +5948,7 @@ struct ManglingParser : AbstractManglingParser<ManglingParser<Alloc>, Alloc> {
 
 DEMANGLE_NAMESPACE_END
 
-#if defined(__clang__)
+#ifdef _LIBCXXABI_COMPILER_CLANG
 #pragma clang diagnostic pop
 #endif
 

@@ -13,7 +13,6 @@
 
 #include "llvm/IR/DerivedTypes.h"
 
-#include "Utility/RISCV_DWARF_Registers.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Value.h"
 #include "lldb/Core/ValueObjectConstResult.h"
@@ -291,13 +290,13 @@ Status ABISysV_riscv::SetReturnValueObject(StackFrameSP &frame_sp,
                                            ValueObjectSP &new_value_sp) {
   Status result;
   if (!new_value_sp) {
-    result = Status::FromErrorString("Empty value object for return value.");
+    result.SetErrorString("Empty value object for return value.");
     return result;
   }
 
   CompilerType compiler_type = new_value_sp->GetCompilerType();
   if (!compiler_type) {
-    result = Status::FromErrorString("Null clang type for return value.");
+    result.SetErrorString("Null clang type for return value.");
     return result;
   }
 
@@ -306,8 +305,7 @@ Status ABISysV_riscv::SetReturnValueObject(StackFrameSP &frame_sp,
   bool is_signed = false;
   if (!compiler_type.IsIntegerOrEnumerationType(is_signed) &&
       !compiler_type.IsPointerType()) {
-    result = Status::FromErrorString(
-        "We don't support returning other types at present");
+    result.SetErrorString("We don't support returning other types at present");
     return result;
   }
 
@@ -315,7 +313,7 @@ Status ABISysV_riscv::SetReturnValueObject(StackFrameSP &frame_sp,
   size_t num_bytes = new_value_sp->GetData(data, result);
 
   if (result.Fail()) {
-    result = Status::FromErrorStringWithFormat(
+    result.SetErrorStringWithFormat(
         "Couldn't convert return value to raw data: %s", result.AsCString());
     return result;
   }
@@ -328,8 +326,8 @@ Status ABISysV_riscv::SetReturnValueObject(StackFrameSP &frame_sp,
     auto reg_info =
         reg_ctx.GetRegisterInfo(eRegisterKindGeneric, LLDB_REGNUM_GENERIC_ARG1);
     if (!reg_ctx.WriteRegisterFromUnsigned(reg_info, raw_value)) {
-      result = Status::FromErrorStringWithFormat(
-          "Couldn't write value to register %s", reg_info->name);
+      result.SetErrorStringWithFormat("Couldn't write value to register %s",
+                                      reg_info->name);
       return result;
     }
 
@@ -345,14 +343,14 @@ Status ABISysV_riscv::SetReturnValueObject(StackFrameSP &frame_sp,
     reg_info =
         reg_ctx.GetRegisterInfo(eRegisterKindGeneric, LLDB_REGNUM_GENERIC_ARG2);
     if (!reg_ctx.WriteRegisterFromUnsigned(reg_info, raw_value)) {
-      result = Status::FromErrorStringWithFormat(
-          "Couldn't write value to register %s", reg_info->name);
+      result.SetErrorStringWithFormat("Couldn't write value to register %s",
+                                      reg_info->name);
     }
 
     return result;
   }
 
-  result = Status::FromErrorString(
+  result.SetErrorString(
       "We don't support returning large integer values at present.");
   return result;
 }
@@ -645,9 +643,9 @@ bool ABISysV_riscv::CreateFunctionEntryUnwindPlan(UnwindPlan &unwind_plan) {
   unwind_plan.Clear();
   unwind_plan.SetRegisterKind(eRegisterKindDWARF);
 
-  uint32_t pc_reg_num = riscv_dwarf::dwarf_gpr_pc;
-  uint32_t sp_reg_num = riscv_dwarf::dwarf_gpr_sp;
-  uint32_t ra_reg_num = riscv_dwarf::dwarf_gpr_ra;
+  uint32_t pc_reg_num = LLDB_REGNUM_GENERIC_PC;
+  uint32_t sp_reg_num = LLDB_REGNUM_GENERIC_SP;
+  uint32_t ra_reg_num = LLDB_REGNUM_GENERIC_RA;
 
   UnwindPlan::RowSP row(new UnwindPlan::Row);
 

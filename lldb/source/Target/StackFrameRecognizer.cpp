@@ -17,14 +17,10 @@ using namespace lldb;
 using namespace lldb_private;
 
 class ScriptedRecognizedStackFrame : public RecognizedStackFrame {
-  bool m_hidden;
-
 public:
-  ScriptedRecognizedStackFrame(ValueObjectListSP args, bool hidden)
-      : m_hidden(hidden) {
-    m_arguments = std::move(args);
+  ScriptedRecognizedStackFrame(ValueObjectListSP args) {
+    m_arguments = args;
   }
-  bool ShouldHide() override { return m_hidden; }
 };
 
 ScriptedStackFrameRecognizer::ScriptedStackFrameRecognizer(
@@ -42,49 +38,34 @@ ScriptedStackFrameRecognizer::RecognizeFrame(lldb::StackFrameSP frame) {
   ValueObjectListSP args =
       m_interpreter->GetRecognizedArguments(m_python_object_sp, frame);
   auto args_synthesized = ValueObjectListSP(new ValueObjectList());
-  if (args) {
-    for (const auto &o : args->GetObjects())
-      args_synthesized->Append(ValueObjectRecognizerSynthesizedValue::Create(
-          *o, eValueTypeVariableArgument));
+  for (const auto &o : args->GetObjects()) {
+    args_synthesized->Append(ValueObjectRecognizerSynthesizedValue::Create(
+        *o, eValueTypeVariableArgument));
   }
 
-  bool hidden = m_interpreter->ShouldHide(m_python_object_sp, frame);
-
   return RecognizedStackFrameSP(
-      new ScriptedRecognizedStackFrame(args_synthesized, hidden));
-}
-
-void StackFrameRecognizerManager::BumpGeneration() {
-  uint32_t n = m_generation;
-  n = (n + 1) & ((1 << 16) - 1);
-  m_generation = n;
+      new ScriptedRecognizedStackFrame(args_synthesized));
 }
 
 void StackFrameRecognizerManager::AddRecognizer(
     StackFrameRecognizerSP recognizer, ConstString module,
-    llvm::ArrayRef<ConstString> symbols,
-    Mangled::NamePreference symbol_mangling, bool first_instruction_only) {
+    llvm::ArrayRef<ConstString> symbols, bool first_instruction_only) {
   m_recognizers.push_front({(uint32_t)m_recognizers.size(), recognizer, false,
                             module, RegularExpressionSP(), symbols,
-                            RegularExpressionSP(), symbol_mangling,
-                            first_instruction_only});
-  BumpGeneration();
+                            RegularExpressionSP(), first_instruction_only});
 }
 
 void StackFrameRecognizerManager::AddRecognizer(
     StackFrameRecognizerSP recognizer, RegularExpressionSP module,
-    RegularExpressionSP symbol, Mangled::NamePreference symbol_mangling,
-    bool first_instruction_only) {
+    RegularExpressionSP symbol, bool first_instruction_only) {
   m_recognizers.push_front({(uint32_t)m_recognizers.size(), recognizer, true,
                             ConstString(), module, std::vector<ConstString>(),
-                            symbol, symbol_mangling, first_instruction_only});
-  BumpGeneration();
+                            symbol, first_instruction_only});
 }
 
 void StackFrameRecognizerManager::ForEach(
-    const std::function<
-        void(uint32_t, std::string, std::string, llvm::ArrayRef<ConstString>,
-             Mangled::NamePreference name_reference, bool)> &callback) {
+    const std::function<void(uint32_t, std::string, std::string,
+                             llvm::ArrayRef<ConstString>, bool)> &callback) {
   for (auto entry : m_recognizers) {
     if (entry.is_regexp) {
       std::string module_name;
@@ -96,13 +77,11 @@ void StackFrameRecognizerManager::ForEach(
         symbol_name = entry.symbol_regexp->GetText().str();
 
       callback(entry.recognizer_id, entry.recognizer->GetName(), module_name,
-               llvm::ArrayRef(ConstString(symbol_name)), entry.symbol_mangling,
-               true);
+               llvm::ArrayRef(ConstString(symbol_name)), true);
 
     } else {
       callback(entry.recognizer_id, entry.recognizer->GetName(),
-               entry.module.GetCString(), entry.symbols, entry.symbol_mangling,
-               false);
+               entry.module.GetCString(), entry.symbols, false);
     }
   }
 }
@@ -118,12 +97,10 @@ bool StackFrameRecognizerManager::RemoveRecognizerWithID(
   if (found == m_recognizers.end())
     return false;
   m_recognizers.erase(found);
-  BumpGeneration();
   return true;
 }
 
 void StackFrameRecognizerManager::RemoveAllRecognizers() {
-  BumpGeneration();
   m_recognizers.clear();
 }
 
@@ -131,6 +108,7 @@ StackFrameRecognizerSP
 StackFrameRecognizerManager::GetRecognizerForFrame(StackFrameSP frame) {
   const SymbolContext &symctx = frame->GetSymbolContext(
       eSymbolContextModule | eSymbolContextFunction | eSymbolContextSymbol);
+  ConstString function_name = symctx.GetFunctionName();
   ModuleSP module_sp = symctx.module_sp;
   if (!module_sp)
     return StackFrameRecognizerSP();
@@ -149,8 +127,6 @@ StackFrameRecognizerManager::GetRecognizerForFrame(StackFrameSP frame) {
     if (entry.module_regexp)
       if (!entry.module_regexp->Execute(module_name.GetStringRef()))
         continue;
-
-    ConstString function_name = symctx.GetFunctionName(entry.symbol_mangling);
 
     if (!entry.symbols.empty())
       if (!llvm::is_contained(entry.symbols, function_name))

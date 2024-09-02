@@ -211,7 +211,8 @@ RecordRecTy *RecordRecTy::get(RecordKeeper &RK,
 
   FoldingSet<RecordRecTy> &ThePool = RKImpl.RecordTypePool;
 
-  SmallVector<Record *, 4> Classes(UnsortedClasses);
+  SmallVector<Record *, 4> Classes(UnsortedClasses.begin(),
+                                   UnsortedClasses.end());
   llvm::sort(Classes, [](Record *LHS, Record *RHS) {
     return LHS->getNameInitAsString() < RHS->getNameInitAsString();
   });
@@ -292,7 +293,7 @@ bool RecordRecTy::typeIsA(const RecTy *RHS) const {
 
 static RecordRecTy *resolveRecordTypes(RecordRecTy *T1, RecordRecTy *T2) {
   SmallVector<Record *, 4> CommonSuperClasses;
-  SmallVector<Record *, 4> Stack(T1->getClasses());
+  SmallVector<Record *, 4> Stack(T1->classes_begin(), T1->classes_end());
 
   while (!Stack.empty()) {
     Record *R = Stack.pop_back_val();
@@ -2282,9 +2283,9 @@ DefInit *VarDefInit::instantiate() {
     ArrayRef<Init *> TArgs = Class->getTemplateArgs();
     MapResolver R(NewRec);
 
-    for (Init *Arg : TArgs) {
-      R.set(Arg, NewRec->getValue(Arg)->getValue());
-      NewRec->removeValue(Arg);
+    for (unsigned I = 0, E = TArgs.size(); I != E; ++I) {
+      R.set(TArgs[I], NewRec->getValue(TArgs[I])->getValue());
+      NewRec->removeValue(TArgs[I]);
     }
 
     for (auto *Arg : args()) {
@@ -3250,7 +3251,9 @@ std::vector<Record *> RecordKeeper::getAllDerivedDefinitions(
       Defs.push_back(OneDef.second.get());
   }
 
-  llvm::sort(Defs, LessRecord());
+  llvm::sort(Defs, [](Record *LHS, Record *RHS) {
+    return LHS->getName().compare_numeric(RHS->getName()) < 0;
+  });
 
   return Defs;
 }

@@ -28,8 +28,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeSparcTarget() {
   RegisterTargetMachine<SparcelTargetMachine> Z(getTheSparcelTarget());
 
   PassRegistry &PR = *PassRegistry::getPassRegistry();
-  initializeSparcDAGToDAGISelLegacyPass(PR);
-  initializeErrataWorkaroundPass(PR);
+  initializeSparcDAGToDAGISelPass(PR);
 }
 
 static cl::opt<bool>
@@ -176,7 +175,7 @@ TargetPassConfig *SparcTargetMachine::createPassConfig(PassManagerBase &PM) {
 }
 
 void SparcPassConfig::addIRPasses() {
-  addPass(createAtomicExpandLegacyPass());
+  addPass(createAtomicExpandPass());
 
   TargetPassConfig::addIRPasses();
 }
@@ -194,7 +193,6 @@ void SparcPassConfig::addPreEmitPass(){
   addPass(new InsertNOPLoad());
   addPass(new DetectRoundChange());
   addPass(new FixAllFDIVSQRT());
-  addPass(new ErrataWorkaround());
 }
 
 void SparcV8TargetMachine::anchor() { }

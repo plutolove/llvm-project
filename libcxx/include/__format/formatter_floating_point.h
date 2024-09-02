@@ -16,7 +16,6 @@
 #include <__algorithm/min.h>
 #include <__algorithm/rotate.h>
 #include <__algorithm/transform.h>
-#include <__assert>
 #include <__charconv/chars_format.h>
 #include <__charconv/to_chars_floating_point.h>
 #include <__charconv/to_chars_result.h>
@@ -39,7 +38,7 @@
 #include <cstddef>
 
 #ifndef _LIBCPP_HAS_NO_LOCALIZATION
-#  include <__locale>
+#  include <locale>
 #endif
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
@@ -774,15 +773,7 @@ struct _LIBCPP_TEMPLATE_VIS formatter<double, _CharT> : public __formatter_float
 template <__fmt_char_type _CharT>
 struct _LIBCPP_TEMPLATE_VIS formatter<long double, _CharT> : public __formatter_floating_point<_CharT> {};
 
-#  if _LIBCPP_STD_VER >= 23
-template <>
-inline constexpr bool enable_nonlocking_formatter_optimization<float> = true;
-template <>
-inline constexpr bool enable_nonlocking_formatter_optimization<double> = true;
-template <>
-inline constexpr bool enable_nonlocking_formatter_optimization<long double> = true;
-#  endif // _LIBCPP_STD_VER >= 23
-#endif   // _LIBCPP_STD_VER >= 20
+#endif //_LIBCPP_STD_VER >= 20
 
 _LIBCPP_END_NAMESPACE_STD
 

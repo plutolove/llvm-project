@@ -342,7 +342,7 @@ uint32_t SBBreakpoint::GetIgnoreCount() const {
   return count;
 }
 
-void SBBreakpoint::SetThreadID(lldb::tid_t tid) {
+void SBBreakpoint::SetThreadID(tid_t tid) {
   LLDB_INSTRUMENT_VA(this, tid);
 
   BreakpointSP bkpt_sp = GetSP();
@@ -353,10 +353,10 @@ void SBBreakpoint::SetThreadID(lldb::tid_t tid) {
   }
 }
 
-lldb::tid_t SBBreakpoint::GetThreadID() {
+tid_t SBBreakpoint::GetThreadID() {
   LLDB_INSTRUMENT_VA(this);
 
-  lldb::tid_t tid = LLDB_INVALID_THREAD_ID;
+  tid_t tid = LLDB_INVALID_THREAD_ID;
   BreakpointSP bkpt_sp = GetSP();
   if (bkpt_sp) {
     std::lock_guard<std::recursive_mutex> guard(
@@ -540,18 +540,17 @@ SBError SBBreakpoint::AddLocation(SBAddress &address) {
   SBError error;
 
   if (!address.IsValid()) {
-    error = Status::FromErrorString("Can't add an invalid address.");
+    error.SetErrorString("Can't add an invalid address.");
     return error;
   }
 
   if (!bkpt_sp) {
-    error = Status::FromErrorString("No breakpoint to add a location to.");
+    error.SetErrorString("No breakpoint to add a location to.");
     return error;
   }
 
   if (!llvm::isa<BreakpointResolverScripted>(bkpt_sp->GetResolver().get())) {
-    error =
-        Status::FromErrorString("Only a scripted resolver can add locations.");
+    error.SetErrorString("Only a scripted resolver can add locations.");
     return error;
   }
 
@@ -561,8 +560,8 @@ SBError SBBreakpoint::AddLocation(SBAddress &address) {
     StreamString s;
     address.get()->Dump(&s, &bkpt_sp->GetTarget(),
                         Address::DumpStyleModuleWithFileAddress);
-    error = Status::FromErrorStringWithFormat(
-        "Address: %s didn't pass the filter.", s.GetData());
+    error.SetErrorStringWithFormat("Address: %s didn't pass the filter.",
+                                   s.GetData());
   }
   return error;
 }
@@ -624,7 +623,7 @@ SBError SBBreakpoint::SetScriptCallbackFunction(
                                                    ->GetObjectSP());
     sb_error.SetError(error);
   } else
-    sb_error = Status::FromErrorString("invalid breakpoint");
+    sb_error.SetErrorString("invalid breakpoint");
 
   return sb_error;
 }
@@ -647,7 +646,7 @@ SBError SBBreakpoint::SetScriptCallbackBody(const char *callback_body_text) {
                                            /*is_callback=*/false);
     sb_error.SetError(error);
   } else
-    sb_error = Status::FromErrorString("invalid breakpoint");
+    sb_error.SetErrorString("invalid breakpoint");
 
   return sb_error;
 }
@@ -672,7 +671,7 @@ SBError SBBreakpoint::AddNameWithErrorHandling(const char *new_name) {
     bkpt_sp->GetTarget().AddNameToBreakpoint(bkpt_sp, new_name, error);
     status.SetError(error);
   } else {
-    status = Status::FromErrorString("invalid breakpoint");
+    status.SetErrorString("invalid breakpoint");
   }
 
   return status;
@@ -715,7 +714,7 @@ void SBBreakpoint::GetNames(SBStringList &names) {
         bkpt_sp->GetTarget().GetAPIMutex());
     std::vector<std::string> names_vec;
     bkpt_sp->GetNames(names_vec);
-    for (const std::string &name : names_vec) {
+    for (std::string name : names_vec) {
       names.AppendString(name.c_str());
     }
   }

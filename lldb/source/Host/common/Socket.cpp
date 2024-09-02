@@ -56,12 +56,10 @@ using namespace lldb_private;
 typedef const char *set_socket_option_arg_type;
 typedef char *get_socket_option_arg_type;
 const NativeSocket Socket::kInvalidSocketValue = INVALID_SOCKET;
-const shared_fd_t SharedSocket::kInvalidFD = LLDB_INVALID_PIPE;
 #else  // #if defined(_WIN32)
 typedef const void *set_socket_option_arg_type;
 typedef void *get_socket_option_arg_type;
 const NativeSocket Socket::kInvalidSocketValue = -1;
-const shared_fd_t SharedSocket::kInvalidFD = Socket::kInvalidSocketValue;
 #endif // #if defined(_WIN32)
 
 static bool IsInterrupted() {
@@ -70,113 +68,6 @@ static bool IsInterrupted() {
 #else
   return errno == EINTR;
 #endif
-}
-
-SharedSocket::SharedSocket(const Socket *socket, Status &error) {
-#ifdef _WIN32
-  m_socket = socket->GetNativeSocket();
-  m_fd = kInvalidFD;
-
-  // Create a pipe to transfer WSAPROTOCOL_INFO to the child process.
-  error = m_socket_pipe.CreateNew(true);
-  if (error.Fail())
-    return;
-
-  m_fd = m_socket_pipe.GetReadPipe();
-#else
-  m_fd = socket->GetNativeSocket();
-  error = Status();
-#endif
-}
-
-Status SharedSocket::CompleteSending(lldb::pid_t child_pid) {
-#ifdef _WIN32
-  // Transfer WSAPROTOCOL_INFO to the child process.
-  m_socket_pipe.CloseReadFileDescriptor();
-
-  WSAPROTOCOL_INFO protocol_info;
-  if (::WSADuplicateSocket(m_socket, child_pid, &protocol_info) ==
-      SOCKET_ERROR) {
-    int last_error = ::WSAGetLastError();
-    return Status::FromErrorStringWithFormat(
-        "WSADuplicateSocket() failed, error: %d", last_error);
-  }
-
-  size_t num_bytes;
-  Status error =
-      m_socket_pipe.WriteWithTimeout(&protocol_info, sizeof(protocol_info),
-                                     std::chrono::seconds(10), num_bytes);
-  if (error.Fail())
-    return error;
-  if (num_bytes != sizeof(protocol_info))
-    return Status::FromErrorStringWithFormatv(
-        "WriteWithTimeout(WSAPROTOCOL_INFO) failed: {0} bytes", num_bytes);
-#endif
-  return Status();
-}
-
-Status SharedSocket::GetNativeSocket(shared_fd_t fd, NativeSocket &socket) {
-#ifdef _WIN32
-  socket = Socket::kInvalidSocketValue;
-  // Read WSAPROTOCOL_INFO from the parent process and create NativeSocket.
-  WSAPROTOCOL_INFO protocol_info;
-  {
-    Pipe socket_pipe(fd, LLDB_INVALID_PIPE);
-    size_t num_bytes;
-    Status error =
-        socket_pipe.ReadWithTimeout(&protocol_info, sizeof(protocol_info),
-                                    std::chrono::seconds(10), num_bytes);
-    if (error.Fail())
-      return error;
-    if (num_bytes != sizeof(protocol_info)) {
-      return Status::FromErrorStringWithFormatv(
-          "socket_pipe.ReadWithTimeout(WSAPROTOCOL_INFO) failed: {0} bytes",
-          num_bytes);
-    }
-  }
-  socket = ::WSASocket(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO,
-                       FROM_PROTOCOL_INFO, &protocol_info, 0, 0);
-  if (socket == INVALID_SOCKET) {
-    return Status::FromErrorStringWithFormatv(
-        "WSASocket(FROM_PROTOCOL_INFO) failed: error {0}", ::WSAGetLastError());
-  }
-  return Status();
-#else
-  socket = fd;
-  return Status();
-#endif
-}
-
-struct SocketScheme {
-  const char *m_scheme;
-  const Socket::SocketProtocol m_protocol;
-};
-
-static SocketScheme socket_schemes[] = {
-    {"tcp", Socket::ProtocolTcp},
-    {"udp", Socket::ProtocolUdp},
-    {"unix", Socket::ProtocolUnixDomain},
-    {"unix-abstract", Socket::ProtocolUnixAbstract},
-};
-
-const char *
-Socket::FindSchemeByProtocol(const Socket::SocketProtocol protocol) {
-  for (auto s : socket_schemes) {
-    if (s.m_protocol == protocol)
-      return s.m_scheme;
-  }
-  return nullptr;
-}
-
-bool Socket::FindProtocolByScheme(const char *scheme,
-                                  Socket::SocketProtocol &protocol) {
-  for (auto s : socket_schemes) {
-    if (!strcmp(s.m_scheme, scheme)) {
-      protocol = s.m_protocol;
-      return true;
-    }
-  }
-  return false;
 }
 
 Socket::Socket(SocketProtocol protocol, bool should_close,
@@ -196,7 +87,8 @@ llvm::Error Socket::Initialize() {
   if (err == 0) {
     if (wsaData.wVersion < wVersion) {
       WSACleanup();
-      return llvm::createStringError("WSASock version is not expected.");
+      return llvm::make_error<llvm::StringError>(
+          "WSASock version is not expected.", llvm::inconvertibleErrorCode());
     }
   } else {
     return llvm::errorCodeToError(llvm::mapWindowsError(::WSAGetLastError()));
@@ -232,7 +124,7 @@ std::unique_ptr<Socket> Socket::Create(const SocketProtocol protocol,
     socket_up =
         std::make_unique<DomainSocket>(true, child_processes_inherit);
 #else
-    error = Status::FromErrorString(
+    error.SetErrorString(
         "Unix domain sockets are not supported on this platform.");
 #endif
     break;
@@ -241,7 +133,7 @@ std::unique_ptr<Socket> Socket::Create(const SocketProtocol protocol,
     socket_up =
         std::make_unique<AbstractSocket>(child_processes_inherit);
 #else
-    error = Status::FromErrorString(
+    error.SetErrorString(
         "Abstract domain sockets are not supported on this platform.");
 #endif
     break;
@@ -421,9 +313,9 @@ size_t Socket::Send(const void *buf, const size_t num_bytes) {
 
 void Socket::SetLastError(Status &error) {
 #if defined(_WIN32)
-  error = Status(::WSAGetLastError(), lldb::eErrorTypeWin32);
+  error.SetError(::WSAGetLastError(), lldb::eErrorTypeWin32);
 #else
-  error = Status::FromErrno();
+  error.SetErrorToErrno();
 #endif
 }
 

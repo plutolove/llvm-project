@@ -49,15 +49,12 @@ TEST(BasicBlockTest, PhiRange) {
 
   // Now insert some PHI nodes.
   auto *Int32Ty = Type::getInt32Ty(Context);
-  auto *P1 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.1",
-                             BI->getIterator());
-  auto *P2 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.2",
-                             BI->getIterator());
-  auto *P3 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.3",
-                             BI->getIterator());
+  auto *P1 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.1", BI);
+  auto *P2 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.2", BI);
+  auto *P3 = PHINode::Create(Int32Ty, /*NumReservedValues*/ 3, "phi.3", BI);
 
   // Some non-PHI nodes.
-  auto *Sum = BinaryOperator::CreateAdd(P1, P2, "sum", BI->getIterator());
+  auto *Sum = BinaryOperator::CreateAdd(P1, P2, "sum", BI);
 
   // Now wire up the incoming values that are interesting.
   P1->addIncoming(P2, BB.get());

@@ -168,6 +168,8 @@ LogicalResult spirv::Deserializer::processInstruction(
     return processType(opcode, operands);
   case spirv::Opcode::OpTypeForwardPointer:
     return processTypeForwardPointer(operands);
+  case spirv::Opcode::OpTypeJointMatrixINTEL:
+    return processType(opcode, operands);
   case spirv::Opcode::OpConstant:
     return processConstant(operands, /*isSpec=*/false);
   case spirv::Opcode::OpSpecConstant:
@@ -487,8 +489,7 @@ Deserializer::processOp<spirv::CopyMemoryOp>(ArrayRef<uint32_t> words) {
     auto attrValue = words[wordIndex++];
     auto attr = opBuilder.getAttr<spirv::MemoryAccessAttr>(
         static_cast<spirv::MemoryAccess>(attrValue));
-    attributes.push_back(
-        opBuilder.getNamedAttr(attributeName<MemoryAccess>(), attr));
+    attributes.push_back(opBuilder.getNamedAttr("memory_access", attr));
     isAlignedAttr = (attrValue == 2);
   }
 

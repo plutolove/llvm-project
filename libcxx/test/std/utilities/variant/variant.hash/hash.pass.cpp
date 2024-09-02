@@ -22,13 +22,14 @@
 #include "poisoned_hash_helper.h"
 
 #ifndef TEST_HAS_NO_EXCEPTIONS
-template <>
-struct std::hash<::MakeEmptyT> {
+namespace std {
+template <> struct hash<::MakeEmptyT> {
   std::size_t operator()(const ::MakeEmptyT &) const {
     assert(false);
     return 0;
   }
 };
+}
 #endif
 
 void test_hash_variant() {
@@ -122,12 +123,16 @@ void test_hash_variant_duplicate_elements() {
 struct A {};
 struct B {};
 
+namespace std {
+
 template <>
-struct std::hash<B> {
+struct hash<B> {
   std::size_t operator()(B const&) const {
     return 0;
   }
 };
+
+}
 
 void test_hash_variant_enabled() {
   {

@@ -23,10 +23,9 @@ class BogusRegisterInfo : public TargetRegisterInfo {
 public:
   BogusRegisterInfo()
       : TargetRegisterInfo(nullptr, BogusRegisterClasses, BogusRegisterClasses,
-                           nullptr, nullptr, nullptr, LaneBitmask(~0u), nullptr,
-                           nullptr) {
+                           nullptr, nullptr, LaneBitmask(~0u), nullptr, nullptr) {
     InitMCRegisterInfo(nullptr, 0, 0, 0, nullptr, 0, nullptr, 0, nullptr,
-                       nullptr, nullptr, nullptr, nullptr, 0, nullptr);
+                       nullptr, nullptr, nullptr, nullptr, 0, nullptr, nullptr);
   }
 
   const MCPhysReg *
@@ -135,7 +134,6 @@ std::unique_ptr<MachineFunction> createMachineFunction(LLVMContext &Ctx,
   MachineModuleInfo MMI(TM);
   const TargetSubtargetInfo &STI = *TM->getSubtargetImpl(*F);
 
-  return std::make_unique<MachineFunction>(*F, *TM, STI, MMI.getContext(),
-                                           FunctionNum);
+  return std::make_unique<MachineFunction>(*F, *TM, STI, FunctionNum, MMI);
 }
 

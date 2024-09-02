@@ -54,7 +54,6 @@ module third {}
 // CHECK-NEXT:         "[[PREFIX]]/second/second/module.modulemap",
 // CHECK-NEXT:         "[[PREFIX]]/second/second/sub.modulemap"
 // CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [],
 // CHECK-NEXT:       "name": "first"
 // CHECK-NEXT:     },
 // CHECK-NEXT:     {
@@ -77,7 +76,6 @@ module third {}
 // CHECK-NEXT:         "[[PREFIX]]/second/second/sub.modulemap",
 // CHECK-NEXT:         "[[PREFIX]]/third/module.modulemap"
 // CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [],
 // CHECK-NEXT:       "name": "second"
 // CHECK-NEXT:     },
 // CHECK-NEXT:     {
@@ -92,7 +90,6 @@ module third {}
 // CHECK-NEXT:       "file-deps": [
 // CHECK-NEXT:         "[[PREFIX]]/third/module.modulemap"
 // CHECK-NEXT:       ],
-// CHECK-NEXT:       "link-libraries": [],
 // CHECK-NEXT:       "name": "third"
 // CHECK-NEXT:     }
 // CHECK-NEXT:   ],

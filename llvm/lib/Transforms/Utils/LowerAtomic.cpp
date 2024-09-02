@@ -25,11 +25,10 @@ bool llvm::lowerAtomicCmpXchgInst(AtomicCmpXchgInst *CXI) {
   Value *Cmp = CXI->getCompareOperand();
   Value *Val = CXI->getNewValOperand();
 
-  LoadInst *Orig =
-      Builder.CreateAlignedLoad(Val->getType(), Ptr, CXI->getAlign());
+  LoadInst *Orig = Builder.CreateLoad(Val->getType(), Ptr);
   Value *Equal = Builder.CreateICmpEQ(Orig, Cmp);
   Value *Res = Builder.CreateSelect(Equal, Val, Orig);
-  Builder.CreateAlignedStore(Res, Ptr, CXI->getAlign());
+  Builder.CreateStore(Res, Ptr);
 
   Res = Builder.CreateInsertValue(PoisonValue::get(CXI->getType()), Orig, 0);
   Res = Builder.CreateInsertValue(Res, Equal, 1);

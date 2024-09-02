@@ -130,7 +130,7 @@ public:
   ///
   /// \returns true to indicate the options are invalid or false otherwise.
   virtual bool ReadLanguageOptions(const LangOptions &LangOpts,
-                                   StringRef ModuleFilename, bool Complain,
+                                   bool Complain,
                                    bool AllowCompatibleDifferences) {
     return false;
   }
@@ -139,8 +139,7 @@ public:
   ///
   /// \returns true to indicate the target options are invalid, or false
   /// otherwise.
-  virtual bool ReadTargetOptions(const TargetOptions &TargetOpts,
-                                 StringRef ModuleFilename, bool Complain,
+  virtual bool ReadTargetOptions(const TargetOptions &TargetOpts, bool Complain,
                                  bool AllowCompatibleDifferences) {
     return false;
   }
@@ -151,7 +150,7 @@ public:
   /// otherwise.
   virtual bool
   ReadDiagnosticOptions(IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts,
-                        StringRef ModuleFilename, bool Complain) {
+                        bool Complain) {
     return false;
   }
 
@@ -173,7 +172,6 @@ public:
   /// \returns true to indicate the header search options are invalid, or false
   /// otherwise.
   virtual bool ReadHeaderSearchOptions(const HeaderSearchOptions &HSOpts,
-                                       StringRef ModuleFilename,
                                        StringRef SpecificModuleCachePath,
                                        bool Complain) {
     return false;
@@ -202,7 +200,6 @@ public:
   /// \returns true to indicate the preprocessor options are invalid, or false
   /// otherwise.
   virtual bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
-                                       StringRef ModuleFilename,
                                        bool ReadMacros, bool Complain,
                                        std::string &SuggestedPredefines) {
     return false;
@@ -265,24 +262,20 @@ public:
   bool ReadFullVersionInformation(StringRef FullVersion) override;
   void ReadModuleName(StringRef ModuleName) override;
   void ReadModuleMapFile(StringRef ModuleMapPath) override;
-  bool ReadLanguageOptions(const LangOptions &LangOpts,
-                           StringRef ModuleFilename, bool Complain,
+  bool ReadLanguageOptions(const LangOptions &LangOpts, bool Complain,
                            bool AllowCompatibleDifferences) override;
-  bool ReadTargetOptions(const TargetOptions &TargetOpts,
-                         StringRef ModuleFilename, bool Complain,
+  bool ReadTargetOptions(const TargetOptions &TargetOpts, bool Complain,
                          bool AllowCompatibleDifferences) override;
   bool ReadDiagnosticOptions(IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts,
-                             StringRef ModuleFilename, bool Complain) override;
+                             bool Complain) override;
   bool ReadFileSystemOptions(const FileSystemOptions &FSOpts,
                              bool Complain) override;
 
   bool ReadHeaderSearchOptions(const HeaderSearchOptions &HSOpts,
-                               StringRef ModuleFilename,
                                StringRef SpecificModuleCachePath,
                                bool Complain) override;
   bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
-                               StringRef ModuleFilename, bool ReadMacros,
-                               bool Complain,
+                               bool ReadMacros, bool Complain,
                                std::string &SuggestedPredefines) override;
 
   void ReadCounter(const serialization::ModuleFile &M, unsigned Value) override;
@@ -306,20 +299,16 @@ public:
   PCHValidator(Preprocessor &PP, ASTReader &Reader)
       : PP(PP), Reader(Reader) {}
 
-  bool ReadLanguageOptions(const LangOptions &LangOpts,
-                           StringRef ModuleFilename, bool Complain,
+  bool ReadLanguageOptions(const LangOptions &LangOpts, bool Complain,
                            bool AllowCompatibleDifferences) override;
-  bool ReadTargetOptions(const TargetOptions &TargetOpts,
-                         StringRef ModuleFilename, bool Complain,
+  bool ReadTargetOptions(const TargetOptions &TargetOpts, bool Complain,
                          bool AllowCompatibleDifferences) override;
   bool ReadDiagnosticOptions(IntrusiveRefCntPtr<DiagnosticOptions> DiagOpts,
-                             StringRef ModuleFilename, bool Complain) override;
+                             bool Complain) override;
   bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
-                               StringRef ModuleFilename, bool ReadMacros,
-                               bool Complain,
+                               bool ReadMacros, bool Complain,
                                std::string &SuggestedPredefines) override;
   bool ReadHeaderSearchOptions(const HeaderSearchOptions &HSOpts,
-                               StringRef ModuleFilename,
                                StringRef SpecificModuleCachePath,
                                bool Complain) override;
   void ReadCounter(const serialization::ModuleFile &M, unsigned Value) override;
@@ -336,8 +325,7 @@ public:
   SimpleASTReaderListener(Preprocessor &PP) : PP(PP) {}
 
   bool ReadPreprocessorOptions(const PreprocessorOptions &PPOpts,
-                               StringRef ModuleFilename, bool ReadMacros,
-                               bool Complain,
+                               bool ReadMacros, bool Complain,
                                std::string &SuggestedPredefines) override;
 };
 
@@ -378,7 +366,6 @@ class ASTReader
 {
 public:
   /// Types of AST files.
-  friend class ASTDeclMerger;
   friend class ASTDeclReader;
   friend class ASTIdentifierIterator;
   friend class ASTRecordReader;
@@ -388,7 +375,6 @@ public:
   friend class serialization::reader::ASTIdentifierLookupTrait;
   friend class serialization::ReadMethodPoolVisitor;
   friend class TypeLocReader;
-  friend class LocalDeclID;
 
   using RecordData = SmallVector<uint64_t, 64>;
   using RecordDataImpl = SmallVectorImpl<uint64_t>;
@@ -443,9 +429,6 @@ private:
   FileManager &FileMgr;
   const PCHContainerReader &PCHContainerRdr;
   DiagnosticsEngine &Diags;
-  // Sema has duplicate logic, but SemaObj can sometimes be null so ASTReader
-  // has its own version.
-  bool WarnedStackExhausted = false;
 
   /// The semantic analysis object that will be processing the
   /// AST files and the translation unit that uses it.
@@ -504,42 +487,45 @@ private:
   /// ID = (I + 1) << FastQual::Width has already been loaded
   llvm::PagedVector<QualType> TypesLoaded;
 
+  using GlobalTypeMapType =
+      ContinuousRangeMap<serialization::TypeID, ModuleFile *, 4>;
+
+  /// Mapping from global type IDs to the module in which the
+  /// type resides along with the offset that should be added to the
+  /// global type ID to produce a local ID.
+  GlobalTypeMapType GlobalTypeMap;
+
   /// Declarations that have already been loaded from the chain.
   ///
   /// When the pointer at index I is non-NULL, the declaration with ID
   /// = I + 1 has already been loaded.
   llvm::PagedVector<Decl *> DeclsLoaded;
 
+  using GlobalDeclMapType =
+      ContinuousRangeMap<serialization::DeclID, ModuleFile *, 4>;
+
+  /// Mapping from global declaration IDs to the module in which the
+  /// declaration resides.
+  GlobalDeclMapType GlobalDeclMap;
+
   using FileOffset = std::pair<ModuleFile *, uint64_t>;
   using FileOffsetsTy = SmallVector<FileOffset, 2>;
-  using DeclUpdateOffsetsMap = llvm::DenseMap<GlobalDeclID, FileOffsetsTy>;
+  using DeclUpdateOffsetsMap =
+      llvm::DenseMap<serialization::DeclID, FileOffsetsTy>;
 
   /// Declarations that have modifications residing in a later file
   /// in the chain.
   DeclUpdateOffsetsMap DeclUpdateOffsets;
 
-  using DelayedNamespaceOffsetMapTy =
-      llvm::DenseMap<GlobalDeclID, std::pair</*LexicalOffset*/ uint64_t,
-                                             /*VisibleOffset*/ uint64_t>>;
-
-  /// Mapping from global declaration IDs to the lexical and visible block
-  /// offset for delayed namespace in reduced BMI.
-  ///
-  /// We can't use the existing DeclUpdate mechanism since the DeclUpdate
-  /// may only be applied in an outer most read. However, we need to know
-  /// whether or not a DeclContext has external storage during the recursive
-  /// reading. So we need to apply the offset immediately after we read the
-  /// namespace as if it is not delayed.
-  DelayedNamespaceOffsetMapTy DelayedNamespaceOffsetMap;
-
   struct PendingUpdateRecord {
     Decl *D;
-    GlobalDeclID ID;
+    serialization::GlobalDeclID ID;
 
     // Whether the declaration was just deserialized.
     bool JustLoaded;
 
-    PendingUpdateRecord(GlobalDeclID ID, Decl *D, bool JustLoaded)
+    PendingUpdateRecord(serialization::GlobalDeclID ID, Decl *D,
+                        bool JustLoaded)
         : D(D), ID(ID), JustLoaded(JustLoaded) {}
   };
 
@@ -592,11 +578,10 @@ private:
 
   struct FileDeclsInfo {
     ModuleFile *Mod = nullptr;
-    ArrayRef<serialization::unaligned_decl_id_t> Decls;
+    ArrayRef<serialization::LocalDeclID> Decls;
 
     FileDeclsInfo() = default;
-    FileDeclsInfo(ModuleFile *Mod,
-                  ArrayRef<serialization::unaligned_decl_id_t> Decls)
+    FileDeclsInfo(ModuleFile *Mod, ArrayRef<serialization::LocalDeclID> Decls)
         : Mod(Mod), Decls(Decls) {}
   };
 
@@ -605,7 +590,7 @@ private:
 
   /// An array of lexical contents of a declaration context, as a sequence of
   /// Decl::Kind, DeclID pairs.
-  using LexicalContents = ArrayRef<serialization::unaligned_decl_id_t>;
+  using LexicalContents = ArrayRef<llvm::support::unaligned_uint32_t>;
 
   /// Map from a DeclContext to its lexical contents.
   llvm::DenseMap<const DeclContext*, std::pair<ModuleFile*, LexicalContents>>
@@ -630,7 +615,8 @@ private:
 
   /// Updates to the visible declarations of declaration contexts that
   /// haven't been loaded yet.
-  llvm::DenseMap<GlobalDeclID, DeclContextVisibleUpdates> PendingVisibleUpdates;
+  llvm::DenseMap<serialization::DeclID, DeclContextVisibleUpdates>
+      PendingVisibleUpdates;
 
   /// The set of C++ or Objective-C classes that have forward
   /// declarations that have not yet been linked to their definitions.
@@ -648,12 +634,6 @@ private:
   /// performed deduplication.
   llvm::SetVector<NamedDecl *> PendingMergedDefinitionsToDeduplicate;
 
-  /// The duplicated definitions in module units which are pending to be warned.
-  /// We need to delay it to wait for the loading of definitions since we don't
-  /// want to warn for forward declarations.
-  llvm::SmallVector<std::pair<Decl *, Decl *>>
-      PendingWarningForDuplicatedDefsInModuleUnits;
-
   /// Read the record that describes the lexical contents of a DC.
   bool ReadLexicalDeclContextStorage(ModuleFile &M,
                                      llvm::BitstreamCursor &Cursor,
@@ -662,7 +642,7 @@ private:
   /// Read the record that describes the visible contents of a DC.
   bool ReadVisibleDeclContextStorage(ModuleFile &M,
                                      llvm::BitstreamCursor &Cursor,
-                                     uint64_t Offset, GlobalDeclID ID);
+                                     uint64_t Offset, serialization::DeclID ID);
 
   /// A vector containing identifiers that have already been
   /// loaded.
@@ -671,6 +651,14 @@ private:
   /// IdentifierInfo for the identifier with ID=I+1 that has already
   /// been loaded.
   std::vector<IdentifierInfo *> IdentifiersLoaded;
+
+  using GlobalIdentifierMapType =
+      ContinuousRangeMap<serialization::IdentID, ModuleFile *, 4>;
+
+  /// Mapping from global identifier IDs to the module in which the
+  /// identifier resides along with the offset that should be added to the
+  /// global identifier ID to produce a local ID.
+  GlobalIdentifierMapType GlobalIdentifierMap;
 
   /// A vector containing macros that have already been
   /// loaded.
@@ -733,7 +721,6 @@ private:
     unsigned ID;
 
     /// Whether this is a wildcard export.
-    LLVM_PREFERRED_TYPE(bool)
     unsigned IsWildcard : 1;
 
     /// String data.
@@ -807,31 +794,21 @@ private:
   /// This contains the data loaded from all EAGERLY_DESERIALIZED_DECLS blocks
   /// in the chain. The referenced declarations are deserialized and passed to
   /// the consumer eagerly.
-  SmallVector<GlobalDeclID, 16> EagerlyDeserializedDecls;
-
-  /// The IDs of all vtables to emit. The referenced declarations are passed
-  /// to the consumers' HandleVTable eagerly after passing
-  /// EagerlyDeserializedDecls.
-  SmallVector<GlobalDeclID, 16> VTablesToEmit;
+  SmallVector<serialization::DeclID, 16> EagerlyDeserializedDecls;
 
   /// The IDs of all tentative definitions stored in the chain.
   ///
   /// Sema keeps track of all tentative definitions in a TU because it has to
   /// complete them and pass them on to CodeGen. Thus, tentative definitions in
   /// the PCH chain must be eagerly deserialized.
-  SmallVector<GlobalDeclID, 16> TentativeDefinitions;
+  SmallVector<serialization::DeclID, 16> TentativeDefinitions;
 
   /// The IDs of all CXXRecordDecls stored in the chain whose VTables are
   /// used.
   ///
   /// CodeGen has to emit VTables for these records, so they have to be eagerly
   /// deserialized.
-  struct VTableUse {
-    GlobalDeclID ID;
-    SourceLocation::UIntTy RawLoc;
-    bool Used;
-  };
-  SmallVector<VTableUse> VTableUses;
+  SmallVector<serialization::DeclID, 64> VTableUses;
 
   /// A snapshot of the pending instantiations in the chain.
   ///
@@ -839,11 +816,7 @@ private:
   /// end of the TU. It consists of a pair of values for every pending
   /// instantiation where the first value is the ID of the decl and the second
   /// is the instantiation location.
-  struct PendingInstantiation {
-    GlobalDeclID ID;
-    SourceLocation::UIntTy RawLoc;
-  };
-  SmallVector<PendingInstantiation, 64> PendingInstantiations;
+  SmallVector<serialization::DeclID, 64> PendingInstantiations;
 
   //@}
 
@@ -853,11 +826,11 @@ private:
 
   /// A snapshot of Sema's unused file-scoped variable tracking, for
   /// generating warnings.
-  SmallVector<GlobalDeclID, 16> UnusedFileScopedDecls;
+  SmallVector<serialization::DeclID, 16> UnusedFileScopedDecls;
 
   /// A list of all the delegating constructors we've seen, to diagnose
   /// cycles.
-  SmallVector<GlobalDeclID, 4> DelegatingCtorDecls;
+  SmallVector<serialization::DeclID, 4> DelegatingCtorDecls;
 
   /// Method selectors used in a @selector expression. Used for
   /// implementation of -Wselector.
@@ -870,7 +843,7 @@ private:
   /// The IDs of type aliases for ext_vectors that exist in the chain.
   ///
   /// Used by Sema for finding sugared names for ext_vectors in diagnostics.
-  SmallVector<GlobalDeclID, 4> ExtVectorDecls;
+  SmallVector<serialization::DeclID, 4> ExtVectorDecls;
 
   //@}
 
@@ -881,16 +854,16 @@ private:
   /// The IDs of all potentially unused typedef names in the chain.
   ///
   /// Sema tracks these to emit warnings.
-  SmallVector<GlobalDeclID, 16> UnusedLocalTypedefNameCandidates;
+  SmallVector<serialization::DeclID, 16> UnusedLocalTypedefNameCandidates;
 
   /// Our current depth in #pragma cuda force_host_device begin/end
   /// macros.
-  unsigned ForceHostDeviceDepth = 0;
+  unsigned ForceCUDAHostDeviceDepth = 0;
 
   /// The IDs of the declarations Sema stores directly.
   ///
   /// Sema tracks a few important decls, such as namespace std, directly.
-  SmallVector<GlobalDeclID, 4> SemaDeclRefs;
+  SmallVector<serialization::DeclID, 4> SemaDeclRefs;
 
   /// The IDs of the types ASTContext stores directly.
   ///
@@ -901,7 +874,7 @@ private:
   ///
   /// The AST context tracks a few important decls, currently cudaConfigureCall,
   /// directly.
-  SmallVector<GlobalDeclID, 2> CUDASpecialDeclRefs;
+  SmallVector<serialization::DeclID, 2> CUDASpecialDeclRefs;
 
   /// The floating point pragma option settings.
   SmallVector<uint64_t, 1> FPPragmaOptions;
@@ -950,15 +923,11 @@ private:
   llvm::DenseMap<const Decl *, std::set<std::string>> OpenCLDeclExtMap;
 
   /// A list of the namespaces we've seen.
-  SmallVector<GlobalDeclID, 4> KnownNamespaces;
+  SmallVector<serialization::DeclID, 4> KnownNamespaces;
 
   /// A list of undefined decls with internal linkage followed by the
   /// SourceLocation of a matching ODR-use.
-  struct UndefinedButUsedDecl {
-    GlobalDeclID ID;
-    SourceLocation::UIntTy RawLoc;
-  };
-  SmallVector<UndefinedButUsedDecl, 8> UndefinedButUsed;
+  SmallVector<serialization::DeclID, 8> UndefinedButUsed;
 
   /// Delete expressions to analyze at the end of translation unit.
   SmallVector<uint64_t, 8> DelayedDeleteExprs;
@@ -970,7 +939,7 @@ private:
   /// The IDs of all decls to be checked for deferred diags.
   ///
   /// Sema tracks these to emit deferred diags.
-  llvm::SmallSetVector<GlobalDeclID, 4> DeclsToCheckForDeferredDiags;
+  llvm::SmallSetVector<serialization::DeclID, 4> DeclsToCheckForDeferredDiags;
 
 private:
   struct ImportedSubmodule {
@@ -1107,17 +1076,31 @@ private:
   ///
   /// The declarations on the identifier chain for these identifiers will be
   /// loaded once the recursive loading has completed.
-  llvm::MapVector<IdentifierInfo *, SmallVector<GlobalDeclID, 4>>
-      PendingIdentifierInfos;
+  llvm::MapVector<IdentifierInfo *, SmallVector<uint32_t, 4>>
+    PendingIdentifierInfos;
 
   /// The set of lookup results that we have faked in order to support
   /// merging of partially deserialized decls but that we have not yet removed.
-  llvm::SmallMapVector<const IdentifierInfo *, SmallVector<NamedDecl *, 2>, 16>
-      PendingFakeLookupResults;
+  llvm::SmallMapVector<IdentifierInfo *, SmallVector<NamedDecl*, 2>, 16>
+    PendingFakeLookupResults;
 
   /// The generation number of each identifier, which keeps track of
   /// the last time we loaded information about this identifier.
-  llvm::DenseMap<const IdentifierInfo *, unsigned> IdentifierGeneration;
+  llvm::DenseMap<IdentifierInfo *, unsigned> IdentifierGeneration;
+
+  class InterestingDecl {
+    Decl *D;
+    bool DeclHasPendingBody;
+
+  public:
+    InterestingDecl(Decl *D, bool HasBody)
+        : D(D), DeclHasPendingBody(HasBody) {}
+
+    Decl *getDecl() { return D; }
+
+    /// Whether the declaration has a pending body.
+    bool hasPendingBody() { return DeclHasPendingBody; }
+  };
 
   /// Contains declarations and definitions that could be
   /// "interesting" to the ASTConsumer, when we get that AST consumer.
@@ -1125,7 +1108,7 @@ private:
   /// "Interesting" declarations are those that have data that may
   /// need to be emitted, such as inline function definitions or
   /// Objective-C protocols.
-  std::deque<Decl *> PotentiallyInterestingDecls;
+  std::deque<InterestingDecl> PotentiallyInterestingDecls;
 
   /// The list of deduced function types that we have not yet read, because
   /// they might contain a deduced return type that refers to a local type
@@ -1152,8 +1135,8 @@ private:
   /// been loaded but its DeclContext was not set yet.
   struct PendingDeclContextInfo {
     Decl *D;
-    GlobalDeclID SemaDC;
-    GlobalDeclID LexicalDC;
+    serialization::GlobalDeclID SemaDC;
+    serialization::GlobalDeclID LexicalDC;
   };
 
   /// The set of Decls that have been loaded but their DeclContexts are
@@ -1234,7 +1217,8 @@ private:
   /// module is loaded.
   SmallVector<ObjCInterfaceDecl *, 16> ObjCClassesLoaded;
 
-  using KeyDeclsMap = llvm::DenseMap<Decl *, SmallVector<GlobalDeclID, 2>>;
+  using KeyDeclsMap =
+      llvm::DenseMap<Decl *, SmallVector<serialization::DeclID, 2>>;
 
   /// A mapping from canonical declarations to the set of global
   /// declaration IDs for key declaration that have been merged with that
@@ -1385,12 +1369,10 @@ private:
                                  SmallVectorImpl<ImportedModule> &Loaded,
                                  const ModuleFile *ImportedBy,
                                  unsigned ClientLoadCapabilities);
-  static ASTReadResult
-  ReadOptionsBlock(llvm::BitstreamCursor &Stream, StringRef Filename,
-                   unsigned ClientLoadCapabilities,
-                   bool AllowCompatibleConfigurationMismatch,
-                   ASTReaderListener &Listener,
-                   std::string &SuggestedPredefines);
+  static ASTReadResult ReadOptionsBlock(
+      llvm::BitstreamCursor &Stream, unsigned ClientLoadCapabilities,
+      bool AllowCompatibleConfigurationMismatch, ASTReaderListener &Listener,
+      std::string &SuggestedPredefines);
 
   /// Read the unhashed control block.
   ///
@@ -1399,11 +1381,12 @@ private:
   ASTReadResult readUnhashedControlBlock(ModuleFile &F, bool WasImportedBy,
                                          unsigned ClientLoadCapabilities);
 
-  static ASTReadResult readUnhashedControlBlockImpl(
-      ModuleFile *F, llvm::StringRef StreamData, StringRef Filename,
-      unsigned ClientLoadCapabilities,
-      bool AllowCompatibleConfigurationMismatch, ASTReaderListener *Listener,
-      bool ValidateDiagnosticOptions);
+  static ASTReadResult
+  readUnhashedControlBlockImpl(ModuleFile *F, llvm::StringRef StreamData,
+                               unsigned ClientLoadCapabilities,
+                               bool AllowCompatibleConfigurationMismatch,
+                               ASTReaderListener *Listener,
+                               bool ValidateDiagnosticOptions);
 
   llvm::Error ReadASTBlock(ModuleFile &F, unsigned ClientLoadCapabilities);
   llvm::Error ReadExtensionBlock(ModuleFile &F);
@@ -1416,26 +1399,21 @@ private:
                                        unsigned ClientLoadCapabilities);
   llvm::Error ReadSubmoduleBlock(ModuleFile &F,
                                  unsigned ClientLoadCapabilities);
-  static bool ParseLanguageOptions(const RecordData &Record,
-                                   StringRef ModuleFilename, bool Complain,
+  static bool ParseLanguageOptions(const RecordData &Record, bool Complain,
                                    ASTReaderListener &Listener,
                                    bool AllowCompatibleDifferences);
-  static bool ParseTargetOptions(const RecordData &Record,
-                                 StringRef ModuleFilename, bool Complain,
+  static bool ParseTargetOptions(const RecordData &Record, bool Complain,
                                  ASTReaderListener &Listener,
                                  bool AllowCompatibleDifferences);
-  static bool ParseDiagnosticOptions(const RecordData &Record,
-                                     StringRef ModuleFilename, bool Complain,
+  static bool ParseDiagnosticOptions(const RecordData &Record, bool Complain,
                                      ASTReaderListener &Listener);
   static bool ParseFileSystemOptions(const RecordData &Record, bool Complain,
                                      ASTReaderListener &Listener);
-  static bool ParseHeaderSearchOptions(const RecordData &Record,
-                                       StringRef ModuleFilename, bool Complain,
+  static bool ParseHeaderSearchOptions(const RecordData &Record, bool Complain,
                                        ASTReaderListener &Listener);
   static bool ParseHeaderSearchPaths(const RecordData &Record, bool Complain,
                                      ASTReaderListener &Listener);
-  static bool ParsePreprocessorOptions(const RecordData &Record,
-                                       StringRef ModuleFilename, bool Complain,
+  static bool ParsePreprocessorOptions(const RecordData &Record, bool Complain,
                                        ASTReaderListener &Listener,
                                        std::string &SuggestedPredefines);
 
@@ -1446,10 +1424,10 @@ private:
     RecordLocation(ModuleFile *M, uint64_t O) : F(M), Offset(O) {}
   };
 
-  QualType readTypeRecord(serialization::TypeID ID);
-  RecordLocation TypeCursorForIndex(serialization::TypeID ID);
+  QualType readTypeRecord(unsigned Index);
+  RecordLocation TypeCursorForIndex(unsigned Index);
   void LoadedDecl(unsigned Index, Decl *D);
-  Decl *ReadDeclRecord(GlobalDeclID ID);
+  Decl *ReadDeclRecord(serialization::DeclID ID);
   void markIncompleteDeclChain(Decl *D);
 
   /// Returns the most recent declaration of a declaration (which must be
@@ -1457,10 +1435,11 @@ private:
   /// merged into its redecl chain.
   Decl *getMostRecentExistingDecl(Decl *D);
 
-  RecordLocation DeclCursorForID(GlobalDeclID ID, SourceLocation &Location);
+  RecordLocation DeclCursorForID(serialization::DeclID ID,
+                                 SourceLocation &Location);
   void loadDeclUpdateRecords(PendingUpdateRecord &Record);
   void loadPendingDeclChain(Decl *D, uint64_t LocalOffset);
-  void loadObjCCategories(GlobalDeclID ID, ObjCInterfaceDecl *D,
+  void loadObjCCategories(serialization::GlobalDeclID ID, ObjCInterfaceDecl *D,
                           unsigned PreviousGeneration = 0);
 
   RecordLocation getLocalBitOffset(uint64_t GlobalOffset);
@@ -1497,7 +1476,7 @@ private:
 public:
   class ModuleDeclIterator
       : public llvm::iterator_adaptor_base<
-            ModuleDeclIterator, const serialization::unaligned_decl_id_t *,
+            ModuleDeclIterator, const serialization::LocalDeclID *,
             std::random_access_iterator_tag, const Decl *, ptrdiff_t,
             const Decl *, const Decl *> {
     ASTReader *Reader = nullptr;
@@ -1507,12 +1486,11 @@ public:
     ModuleDeclIterator() : iterator_adaptor_base(nullptr) {}
 
     ModuleDeclIterator(ASTReader *Reader, ModuleFile *Mod,
-                       const serialization::unaligned_decl_id_t *Pos)
+                       const serialization::LocalDeclID *Pos)
         : iterator_adaptor_base(Pos), Reader(Reader), Mod(Mod) {}
 
     value_type operator*() const {
-      LocalDeclID ID = LocalDeclID::get(*Reader, *Mod, *I);
-      return Reader->GetDecl(Reader->getGlobalDeclID(*Mod, ID));
+      return Reader->GetDecl(Reader->getGlobalDeclID(*Mod, *I));
     }
 
     value_type operator->() const { return **this; }
@@ -1527,18 +1505,17 @@ public:
   getModuleFileLevelDecls(ModuleFile &Mod);
 
 private:
-  bool isConsumerInterestedIn(Decl *D);
   void PassInterestingDeclsToConsumer();
   void PassInterestingDeclToConsumer(Decl *D);
-  void PassVTableToConsumer(CXXRecordDecl *RD);
 
   void finishPendingActions();
   void diagnoseOdrViolations();
 
   void pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name);
 
-  void addPendingDeclContextInfo(Decl *D, GlobalDeclID SemaDC,
-                                 GlobalDeclID LexicalDC) {
+  void addPendingDeclContextInfo(Decl *D,
+                                 serialization::GlobalDeclID SemaDC,
+                                 serialization::GlobalDeclID LexicalDC) {
     assert(D);
     PendingDeclContextInfo Info = { D, SemaDC, LexicalDC };
     PendingDeclContextInfos.push_back(Info);
@@ -1552,22 +1529,6 @@ private:
   void Error(unsigned DiagID, StringRef Arg1 = StringRef(),
              StringRef Arg2 = StringRef(), StringRef Arg3 = StringRef()) const;
   void Error(llvm::Error &&Err) const;
-
-  /// Translate a \param GlobalDeclID to the index of DeclsLoaded array.
-  unsigned translateGlobalDeclIDToIndex(GlobalDeclID ID) const;
-
-  /// Translate an \param IdentifierID ID to the index of IdentifiersLoaded
-  /// array and the corresponding module file.
-  std::pair<ModuleFile *, unsigned>
-  translateIdentifierIDToIndex(serialization::IdentifierID ID) const;
-
-  /// Translate an \param TypeID ID to the index of TypesLoaded
-  /// array and the corresponding module file.
-  std::pair<ModuleFile *, unsigned>
-  translateTypeIDToIndex(serialization::TypeID ID) const;
-
-  /// Get a predefined Decl from ASTContext.
-  Decl *getPredefinedDecl(PredefinedDeclIDs ID);
 
 public:
   /// Load the AST file and validate its contents against the given
@@ -1799,7 +1760,6 @@ public:
 
   /// Retrieve the module manager.
   ModuleManager &getModuleManager() { return ModuleMgr; }
-  const ModuleManager &getModuleManager() const { return ModuleMgr; }
 
   /// Retrieve the preprocessor.
   Preprocessor &getPreprocessor() const { return PP; }
@@ -1820,13 +1780,12 @@ public:
   /// Read the control block for the named AST file.
   ///
   /// \returns true if an error occurred, false otherwise.
-  static bool readASTFileControlBlock(
-      StringRef Filename, FileManager &FileMgr,
-      const InMemoryModuleCache &ModuleCache,
-      const PCHContainerReader &PCHContainerRdr, bool FindModuleFileExtensions,
-      ASTReaderListener &Listener, bool ValidateDiagnosticOptions,
-      unsigned ClientLoadCapabilities = ARR_ConfigurationMismatch |
-                                        ARR_OutOfDate);
+  static bool readASTFileControlBlock(StringRef Filename, FileManager &FileMgr,
+                                      const InMemoryModuleCache &ModuleCache,
+                                      const PCHContainerReader &PCHContainerRdr,
+                                      bool FindModuleFileExtensions,
+                                      ASTReaderListener &Listener,
+                                      bool ValidateDiagnosticOptions);
 
   /// Determine whether the given AST file is acceptable to load into a
   /// translation unit with the given language and target options.
@@ -1917,11 +1876,10 @@ public:
   QualType GetType(serialization::TypeID ID);
 
   /// Resolve a local type ID within a given AST file into a type.
-  QualType getLocalType(ModuleFile &F, serialization::LocalTypeID LocalID);
+  QualType getLocalType(ModuleFile &F, unsigned LocalID);
 
   /// Map a local type ID within a given AST file into a global type ID.
-  serialization::TypeID
-  getGlobalTypeID(ModuleFile &F, serialization::LocalTypeID LocalID) const;
+  serialization::TypeID getGlobalTypeID(ModuleFile &F, unsigned LocalID) const;
 
   /// Read a type from the current position in the given record, which
   /// was read from the given AST file.
@@ -1934,37 +1892,38 @@ public:
 
   /// Map from a local declaration ID within a given module to a
   /// global declaration ID.
-  GlobalDeclID getGlobalDeclID(ModuleFile &F, LocalDeclID LocalID) const;
+  serialization::DeclID getGlobalDeclID(ModuleFile &F,
+                                      serialization::LocalDeclID LocalID) const;
 
   /// Returns true if global DeclID \p ID originated from module \p M.
-  bool isDeclIDFromModule(GlobalDeclID ID, ModuleFile &M) const;
+  bool isDeclIDFromModule(serialization::GlobalDeclID ID, ModuleFile &M) const;
 
   /// Retrieve the module file that owns the given declaration, or NULL
   /// if the declaration is not from a module file.
-  ModuleFile *getOwningModuleFile(const Decl *D) const;
-  ModuleFile *getOwningModuleFile(GlobalDeclID ID) const;
+  ModuleFile *getOwningModuleFile(const Decl *D);
 
   /// Returns the source location for the decl \p ID.
-  SourceLocation getSourceLocationForDeclID(GlobalDeclID ID);
+  SourceLocation getSourceLocationForDeclID(serialization::GlobalDeclID ID);
 
   /// Resolve a declaration ID into a declaration, potentially
   /// building a new declaration.
-  Decl *GetDecl(GlobalDeclID ID);
-  Decl *GetExternalDecl(GlobalDeclID ID) override;
+  Decl *GetDecl(serialization::DeclID ID);
+  Decl *GetExternalDecl(uint32_t ID) override;
 
   /// Resolve a declaration ID into a declaration. Return 0 if it's not
   /// been loaded yet.
-  Decl *GetExistingDecl(GlobalDeclID ID);
+  Decl *GetExistingDecl(serialization::DeclID ID);
 
   /// Reads a declaration with the given local ID in the given module.
-  Decl *GetLocalDecl(ModuleFile &F, LocalDeclID LocalID) {
+  Decl *GetLocalDecl(ModuleFile &F, uint32_t LocalID) {
     return GetDecl(getGlobalDeclID(F, LocalID));
   }
 
   /// Reads a declaration with the given local ID in the given module.
   ///
   /// \returns The requested declaration, casted to the given return type.
-  template <typename T> T *GetLocalDeclAs(ModuleFile &F, LocalDeclID LocalID) {
+  template<typename T>
+  T *GetLocalDeclAs(ModuleFile &F, uint32_t LocalID) {
     return cast_or_null<T>(GetLocalDecl(F, LocalID));
   }
 
@@ -1973,19 +1932,20 @@ public:
   ///
   /// \returns the global ID of the given declaration as known in the given
   /// module file.
-  LocalDeclID mapGlobalIDToModuleFileGlobalID(ModuleFile &M,
-                                              GlobalDeclID GlobalID);
+  serialization::DeclID
+  mapGlobalIDToModuleFileGlobalID(ModuleFile &M,
+                                  serialization::DeclID GlobalID);
 
   /// Reads a declaration ID from the given position in a record in the
   /// given module.
   ///
   /// \returns The declaration ID read from the record, adjusted to a global ID.
-  GlobalDeclID ReadDeclID(ModuleFile &F, const RecordDataImpl &Record,
-                          unsigned &Idx);
+  serialization::DeclID ReadDeclID(ModuleFile &F, const RecordData &Record,
+                                   unsigned &Idx);
 
   /// Reads a declaration from the given position in a record in the
   /// given module.
-  Decl *ReadDecl(ModuleFile &F, const RecordDataImpl &R, unsigned &I) {
+  Decl *ReadDecl(ModuleFile &F, const RecordData &R, unsigned &I) {
     return GetDecl(ReadDeclID(F, R, I));
   }
 
@@ -1994,8 +1954,8 @@ public:
   ///
   /// \returns The declaration read from this location, casted to the given
   /// result type.
-  template <typename T>
-  T *ReadDeclAs(ModuleFile &F, const RecordDataImpl &R, unsigned &I) {
+  template<typename T>
+  T *ReadDeclAs(ModuleFile &F, const RecordData &R, unsigned &I) {
     return cast_or_null<T>(GetDecl(ReadDeclID(F, R, I)));
   }
 
@@ -2149,14 +2109,14 @@ public:
       llvm::MapVector<const FunctionDecl *, std::unique_ptr<LateParsedTemplate>>
           &LPTMap) override;
 
-  void AssignedLambdaNumbering(CXXRecordDecl *Lambda) override;
+  void AssignedLambdaNumbering(const CXXRecordDecl *Lambda) override;
 
   /// Load a selector from disk, registering its ID if it exists.
   void LoadSelector(Selector Sel);
 
-  void SetIdentifierInfo(serialization::IdentifierID ID, IdentifierInfo *II);
+  void SetIdentifierInfo(unsigned ID, IdentifierInfo *II);
   void SetGloballyVisibleDecls(IdentifierInfo *II,
-                               const SmallVectorImpl<GlobalDeclID> &DeclIDs,
+                               const SmallVectorImpl<uint32_t> &DeclIDs,
                                SmallVectorImpl<Decl *> *Decls = nullptr);
 
   /// Report a diagnostic.
@@ -2164,8 +2124,6 @@ public:
 
   /// Report a diagnostic.
   DiagnosticBuilder Diag(SourceLocation Loc, unsigned DiagID) const;
-
-  void warnStackExhausted(SourceLocation Loc);
 
   IdentifierInfo *DecodeIdentifierInfo(serialization::IdentifierID ID);
 
@@ -2181,10 +2139,10 @@ public:
     return DecodeIdentifierInfo(ID);
   }
 
-  IdentifierInfo *getLocalIdentifier(ModuleFile &M, uint64_t LocalID);
+  IdentifierInfo *getLocalIdentifier(ModuleFile &M, unsigned LocalID);
 
   serialization::IdentifierID getGlobalIdentifierID(ModuleFile &M,
-                                                    uint64_t LocalID);
+                                                    unsigned LocalID);
 
   void resolvePendingMacro(IdentifierInfo *II, const PendingMacroInfo &PMInfo);
 
@@ -2210,8 +2168,8 @@ public:
 
   /// Retrieve the global submodule ID given a module and its local ID
   /// number.
-  serialization::SubmoduleID getGlobalSubmoduleID(ModuleFile &M,
-                                                  unsigned LocalID) const;
+  serialization::SubmoduleID
+  getGlobalSubmoduleID(ModuleFile &M, unsigned LocalID);
 
   /// Retrieve the submodule that corresponds to a global submodule ID.
   ///
@@ -2224,7 +2182,7 @@ public:
 
   /// Retrieve the module file with a given local ID within the specified
   /// ModuleFile.
-  ModuleFile *getLocalModuleFile(ModuleFile &M, unsigned ID) const;
+  ModuleFile *getLocalModuleFile(ModuleFile &M, unsigned ID);
 
   /// Get an ID for the given module file.
   unsigned getModuleFileID(ModuleFile *M);
@@ -2260,46 +2218,33 @@ public:
     return Sema::AlignPackInfo::getFromRawEncoding(Raw);
   }
 
-  using RawLocEncoding = SourceLocationEncoding::RawLocEncoding;
-
   /// Read a source location from raw form and return it in its
   /// originating module file's source location space.
-  std::pair<SourceLocation, unsigned>
-  ReadUntranslatedSourceLocation(RawLocEncoding Raw,
-                                 LocSeq *Seq = nullptr) const {
+  SourceLocation ReadUntranslatedSourceLocation(SourceLocation::UIntTy Raw,
+                                                LocSeq *Seq = nullptr) const {
     return SourceLocationEncoding::decode(Raw, Seq);
   }
 
   /// Read a source location from raw form.
-  SourceLocation ReadSourceLocation(ModuleFile &MF, RawLocEncoding Raw,
+  SourceLocation ReadSourceLocation(ModuleFile &ModuleFile,
+                                    SourceLocation::UIntTy Raw,
                                     LocSeq *Seq = nullptr) const {
-    if (!MF.ModuleOffsetMap.empty())
-      ReadModuleOffsetMap(MF);
-
-    auto [Loc, ModuleFileIndex] = ReadUntranslatedSourceLocation(Raw, Seq);
-    ModuleFile *OwningModuleFile =
-        ModuleFileIndex == 0 ? &MF : MF.TransitiveImports[ModuleFileIndex - 1];
-
-    assert(!SourceMgr.isLoadedSourceLocation(Loc) &&
-           "Run out source location space");
-
-    return TranslateSourceLocation(*OwningModuleFile, Loc);
+    SourceLocation Loc = ReadUntranslatedSourceLocation(Raw, Seq);
+    return TranslateSourceLocation(ModuleFile, Loc);
   }
 
   /// Translate a source location from another module file's source
   /// location space into ours.
   SourceLocation TranslateSourceLocation(ModuleFile &ModuleFile,
                                          SourceLocation Loc) const {
-    if (Loc.isInvalid())
-      return Loc;
-
-    // FIXME: TranslateSourceLocation is not re-enterable. It is problematic
-    // to call TranslateSourceLocation on a translated source location.
-    // We either need a method to know whether or not a source location is
-    // translated or refactor the code to make it clear that
-    // TranslateSourceLocation won't be called with translated source location.
-
-    return Loc.getLocWithOffset(ModuleFile.SLocEntryBaseOffset - 2);
+    if (!ModuleFile.ModuleOffsetMap.empty())
+      ReadModuleOffsetMap(ModuleFile);
+    assert(ModuleFile.SLocRemap.find(Loc.getOffset()) !=
+               ModuleFile.SLocRemap.end() &&
+           "Cannot find offset to remap.");
+    SourceLocation::IntTy Remap =
+        ModuleFile.SLocRemap.find(Loc.getOffset())->second;
+    return Loc.getLocWithOffset(Remap);
   }
 
   /// Read a source location.
@@ -2324,9 +2269,6 @@ public:
   /// Read a source range.
   SourceRange ReadSourceRange(ModuleFile &F, const RecordData &Record,
                               unsigned &Idx, LocSeq *Seq = nullptr);
-
-  static llvm::BitVector ReadBitVector(const RecordData &Record,
-                                       const StringRef Blob);
 
   // Read a string
   static std::string ReadString(const RecordDataImpl &Record, unsigned &Idx);
@@ -2397,10 +2339,10 @@ public:
   void ReadDefinedMacros() override;
 
   /// Update an out-of-date identifier.
-  void updateOutOfDateIdentifier(const IdentifierInfo &II) override;
+  void updateOutOfDateIdentifier(IdentifierInfo &II) override;
 
   /// Note that this identifier is up-to-date.
-  void markIdentifierUpToDate(const IdentifierInfo *II);
+  void markIdentifierUpToDate(IdentifierInfo *II);
 
   /// Load all external visible decls in the given DeclContext.
   void completeVisibleDeclsMap(const DeclContext *DC) override;
@@ -2413,7 +2355,7 @@ public:
 
   // Contains the IDs for declarations that were requested before we have
   // access to a Sema object.
-  SmallVector<GlobalDeclID, 16> PreloadedDeclIDs;
+  SmallVector<uint64_t, 16> PreloadedDeclIDs;
 
   /// Retrieve the semantic analysis object used to analyze the
   /// translation unit in which the precompiled header is being
@@ -2509,12 +2451,6 @@ private:
   uint32_t Value;
   uint32_t CurrentBitsIndex = ~0;
 };
-
-inline bool shouldSkipCheckingODR(const Decl *D) {
-  return D->getASTContext().getLangOpts().SkipODRCheckInGMF &&
-         D->isFromGlobalModule();
-}
-
 } // namespace clang
 
 #endif // LLVM_CLANG_SERIALIZATION_ASTREADER_H

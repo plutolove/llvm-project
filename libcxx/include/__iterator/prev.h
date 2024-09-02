@@ -40,7 +40,9 @@ prev(_InputIter __x, typename iterator_traits<_InputIter>::difference_type __n =
 // [range.iter.op.prev]
 
 namespace ranges {
-struct __prev {
+namespace __prev {
+
+struct __fn {
   template <bidirectional_iterator _Ip>
   _LIBCPP_HIDE_FROM_ABI constexpr _Ip operator()(_Ip __x) const {
     --__x;
@@ -60,8 +62,10 @@ struct __prev {
   }
 };
 
+} // namespace __prev
+
 inline namespace __cpo {
-inline constexpr auto prev = __prev{};
+inline constexpr auto prev = __prev::__fn{};
 } // namespace __cpo
 } // namespace ranges
 

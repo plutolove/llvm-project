@@ -56,7 +56,7 @@ DynamicLoader *DynamicLoaderMacOS::CreateInstance(Process *process,
       case llvm::Triple::TvOS:
       case llvm::Triple::WatchOS:
       case llvm::Triple::XROS:
-      case llvm::Triple::BridgeOS:
+      // NEED_BRIDGEOS_TRIPLE case llvm::Triple::BridgeOS:
         create = triple_ref.getVendor() == llvm::Triple::Apple;
         break;
       default:
@@ -668,8 +668,7 @@ Status DynamicLoaderMacOS::CanLoadImage() {
       int lock_held =
           m_process->ReadUnsignedIntegerFromMemory(symbol_address, 4, 0, error);
       if (lock_held != 0) {
-        error =
-            Status::FromErrorString("dyld lock held - unsafe to load images.");
+        error.SetErrorString("dyld lock held - unsafe to load images.");
       }
     }
   } else {
@@ -679,8 +678,8 @@ Status DynamicLoaderMacOS::CanLoadImage() {
     // than one module then we are clearly past _dyld_start so in that case
     // we'll default to "it's safe".
     if (target.GetImages().GetSize() <= 1)
-      error = Status::FromErrorString("could not find the dyld library or "
-                                      "the dyld lock symbol");
+      error.SetErrorString("could not find the dyld library or "
+                           "the dyld lock symbol");
   }
   return error;
 }

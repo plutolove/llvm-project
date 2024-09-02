@@ -137,21 +137,18 @@ struct CaseBlock {
   SDLoc DL;
   DebugLoc DbgLoc;
 
-  // Branch weights and predictability.
+  // Branch weights.
   BranchProbability TrueProb, FalseProb;
-  bool IsUnpredictable;
 
   // Constructor for SelectionDAG.
   CaseBlock(ISD::CondCode cc, const Value *cmplhs, const Value *cmprhs,
             const Value *cmpmiddle, MachineBasicBlock *truebb,
             MachineBasicBlock *falsebb, MachineBasicBlock *me, SDLoc dl,
             BranchProbability trueprob = BranchProbability::getUnknown(),
-            BranchProbability falseprob = BranchProbability::getUnknown(),
-            bool isunpredictable = false)
+            BranchProbability falseprob = BranchProbability::getUnknown())
       : CC(cc), CmpLHS(cmplhs), CmpMHS(cmpmiddle), CmpRHS(cmprhs),
         TrueBB(truebb), FalseBB(falsebb), ThisBB(me), DL(dl),
-        TrueProb(trueprob), FalseProb(falseprob),
-        IsUnpredictable(isunpredictable) {}
+        TrueProb(trueprob), FalseProb(falseprob) {}
 
   // Constructor for GISel.
   CaseBlock(CmpInst::Predicate pred, bool nocmp, const Value *cmplhs,
@@ -159,12 +156,10 @@ struct CaseBlock {
             MachineBasicBlock *truebb, MachineBasicBlock *falsebb,
             MachineBasicBlock *me, DebugLoc dl,
             BranchProbability trueprob = BranchProbability::getUnknown(),
-            BranchProbability falseprob = BranchProbability::getUnknown(),
-            bool isunpredictable = false)
+            BranchProbability falseprob = BranchProbability::getUnknown())
       : PredInfo({pred, nocmp}), CmpLHS(cmplhs), CmpMHS(cmpmiddle),
         CmpRHS(cmprhs), TrueBB(truebb), FalseBB(falsebb), ThisBB(me),
-        DbgLoc(dl), TrueProb(trueprob), FalseProb(falseprob),
-        IsUnpredictable(isunpredictable) {}
+        DbgLoc(dl), TrueProb(trueprob), FalseProb(falseprob) {}
 };
 
 struct JumpTable {

@@ -28,7 +28,6 @@
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/MDBuilder.h"
-#include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/ProfDataUtils.h"
 #include "llvm/Support/BranchProbability.h"
@@ -281,7 +280,8 @@ class CHRScope {
 
  private:
    CHRScope(ArrayRef<RegInfo> RegInfosIn, ArrayRef<CHRScope *> SubsIn)
-       : RegInfos(RegInfosIn), Subs(SubsIn), BranchInsertPoint(nullptr) {}
+       : RegInfos(RegInfosIn.begin(), RegInfosIn.end()),
+         Subs(SubsIn.begin(), SubsIn.end()), BranchInsertPoint(nullptr) {}
 };
 
 class CHR {
@@ -1878,7 +1878,7 @@ void CHR::fixupBranchesAndSelects(CHRScope *Scope,
       static_cast<uint32_t>(CHRBranchBias.scale(1000)),
       static_cast<uint32_t>(CHRBranchBias.getCompl().scale(1000)),
   };
-  setBranchWeights(*MergedBR, Weights, /*IsExpected=*/false);
+  setBranchWeights(*MergedBR, Weights);
   CHR_DEBUG(dbgs() << "CHR branch bias " << Weights[0] << ":" << Weights[1]
             << "\n");
 }

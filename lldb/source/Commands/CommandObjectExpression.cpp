@@ -52,7 +52,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
                   option_arg.str().c_str());
 
       Language::PrintSupportedLanguagesForExpressions(sstr, "  ", "\n");
-      error = Status(sstr.GetString().str());
+      error.SetErrorString(sstr.GetString());
     }
     break;
 
@@ -61,7 +61,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     bool result;
     result = OptionArgParser::ToBoolean(option_arg, true, &success);
     if (!success)
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "invalid all-threads value setting: \"%s\"",
           option_arg.str().c_str());
     else
@@ -74,7 +74,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     if (success)
       ignore_breakpoints = tmp_value;
     else
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "could not convert \"%s\" to a boolean value.",
           option_arg.str().c_str());
     break;
@@ -86,7 +86,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     if (success)
       allow_jit = tmp_value;
     else
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "could not convert \"%s\" to a boolean value.",
           option_arg.str().c_str());
     break;
@@ -95,8 +95,8 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
   case 't':
     if (option_arg.getAsInteger(0, timeout)) {
       timeout = 0;
-      error = Status::FromErrorStringWithFormat(
-          "invalid timeout setting \"%s\"", option_arg.str().c_str());
+      error.SetErrorStringWithFormat("invalid timeout setting \"%s\"",
+                                     option_arg.str().c_str());
     }
     break;
 
@@ -106,7 +106,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     if (success)
       unwind_on_error = tmp_value;
     else
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "could not convert \"%s\" to a boolean value.",
           option_arg.str().c_str());
     break;
@@ -121,7 +121,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
         OptionArgParser::ToOptionEnum(
             option_arg, GetDefinitions()[option_idx].enum_values, 0, error);
     if (!error.Success())
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "unrecognized value for description-verbosity '%s'",
           option_arg.str().c_str());
     break;
@@ -142,7 +142,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     if (success)
       auto_apply_fixits = tmp_value ? eLazyBoolYes : eLazyBoolNo;
     else
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "could not convert \"%s\" to a boolean value.",
           option_arg.str().c_str());
     break;
@@ -155,7 +155,7 @@ Status CommandObjectExpression::CommandOptions::SetOptionValue(
     if (success)
       suppress_persistent_result = !persist_result ? eLazyBoolYes : eLazyBoolNo;
     else
-      error = Status::FromErrorStringWithFormat(
+      error.SetErrorStringWithFormat(
           "could not convert \"%s\" to a boolean value.",
           option_arg.str().c_str());
     break;
@@ -311,7 +311,19 @@ Examples:
     expr unsigned int $foo = 5
     expr char c[] = \"foo\"; c[0])");
 
-  AddSimpleArgumentList(eArgTypeExpression);
+  CommandArgumentEntry arg;
+  CommandArgumentData expression_arg;
+
+  // Define the first (and only) variant of this arg.
+  expression_arg.arg_type = eArgTypeExpression;
+  expression_arg.arg_repetition = eArgRepeatPlain;
+
+  // There is only one variant this argument could be; put it into the argument
+  // entry.
+  arg.push_back(expression_arg);
+
+  // Push the data for the first argument into the m_arguments vector.
+  m_arguments.push_back(arg);
 
   // Add the "--format" and "--gdb-format"
   m_option_group.Append(&m_format_options,
@@ -392,9 +404,9 @@ CanBeUsedForElementCountPrinting(ValueObject &valobj) {
   CompilerType type(valobj.GetCompilerType());
   CompilerType pointee;
   if (!type.IsPointerType(&pointee))
-    return Status::FromErrorString("as it does not refer to a pointer");
+    return Status("as it does not refer to a pointer");
   if (pointee.IsVoidType())
-    return Status::FromErrorString("as it refers to a pointer to void");
+    return Status("as it refers to a pointer to void");
   return Status();
 }
 
@@ -461,11 +473,7 @@ bool CommandObjectExpression::EvaluateExpression(llvm::StringRef expr,
         options.SetVariableFormatDisplayLanguage(
             result_valobj_sp->GetPreferredDisplayLanguage());
 
-        if (llvm::Error error =
-                result_valobj_sp->Dump(output_stream, options)) {
-          result.AppendError(toString(std::move(error)));
-          return false;
-        }
+        result_valobj_sp->Dump(output_stream, options);
 
         if (suppress_result)
           if (auto result_var_sp =
@@ -605,7 +613,7 @@ void CommandObjectExpression::DoExecute(llvm::StringRef command,
       return;
 
     if (m_repl_option.GetOptionValue().GetCurrentValue()) {
-      Target &target = GetTarget();
+      Target &target = GetSelectedOrDummyTarget();
       // Drop into REPL
       m_expr_lines.clear();
       m_expr_line_count = 0;
@@ -650,7 +658,7 @@ void CommandObjectExpression::DoExecute(llvm::StringRef command,
           io_handler_sp->SetIsDone(false);
           debugger.RunIOHandlerAsync(io_handler_sp);
         } else {
-          repl_error = Status::FromErrorStringWithFormat(
+          repl_error.SetErrorStringWithFormat(
               "Couldn't create a REPL for %s",
               Language::GetNameForLanguageType(m_command_options.language));
           result.SetError(repl_error);
@@ -665,7 +673,7 @@ void CommandObjectExpression::DoExecute(llvm::StringRef command,
     }
   }
 
-  Target &target = GetTarget();
+  Target &target = GetSelectedOrDummyTarget();
   if (EvaluateExpression(expr, result.GetOutputStream(),
                          result.GetErrorStream(), result)) {
 

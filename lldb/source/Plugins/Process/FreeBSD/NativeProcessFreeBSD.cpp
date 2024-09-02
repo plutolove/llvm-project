@@ -36,32 +36,16 @@ static Status EnsureFDFlags(int fd, int flags) {
 
   int status = fcntl(fd, F_GETFL);
   if (status == -1) {
-    error = Status::FromErrno();
+    error.SetErrorToErrno();
     return error;
   }
 
   if (fcntl(fd, F_SETFL, status | flags) == -1) {
-    error = Status::FromErrno();
+    error.SetErrorToErrno();
     return error;
   }
 
   return error;
-}
-
-static Status CanTrace() {
-  int proc_debug, ret;
-  size_t len = sizeof(proc_debug);
-  ret = ::sysctlbyname("security.bsd.unprivileged_proc_debug", &proc_debug,
-                       &len, nullptr, 0);
-  if (ret != 0)
-    return Status::FromErrorString(
-        "sysctlbyname() security.bsd.unprivileged_proc_debug failed");
-
-  if (proc_debug < 1)
-    return Status::FromErrorString(
-        "process debug disabled by security.bsd.unprivileged_proc_debug oid");
-
-  return {};
 }
 
 // Public Static Methods
@@ -70,17 +54,14 @@ llvm::Expected<std::unique_ptr<NativeProcessProtocol>>
 NativeProcessFreeBSD::Manager::Launch(ProcessLaunchInfo &launch_info,
                                       NativeDelegate &native_delegate) {
   Log *log = GetLog(POSIXLog::Process);
-  Status status;
 
+  Status status;
   ::pid_t pid = ProcessLauncherPosixFork()
                     .LaunchProcess(launch_info, status)
                     .GetProcessId();
   LLDB_LOG(log, "pid = {0:x}", pid);
   if (status.Fail()) {
     LLDB_LOG(log, "failed to launch process: {0}", status);
-    auto error = CanTrace();
-    if (error.Fail())
-      return error.ToError();
     return status.ToError();
   }
 
@@ -411,11 +392,8 @@ Status NativeProcessFreeBSD::PtraceWrapper(int req, lldb::pid_t pid, void *addr,
   ret =
       ptrace(req, static_cast<::pid_t>(pid), static_cast<caddr_t>(addr), data);
 
-  if (ret == -1) {
-    error = CanTrace();
-    if (error.Success())
-      error = Status::FromErrno();
-  }
+  if (ret == -1)
+    error.SetErrorToErrno();
 
   if (result)
     *result = ret;
@@ -489,14 +467,13 @@ Status NativeProcessFreeBSD::Resume(const ResumeActionList &resume_actions) {
     case eStateSuspended:
     case eStateStopped:
       if (action->signal != LLDB_INVALID_SIGNAL_NUMBER)
-        return Status::FromErrorString(
-            "Passing signal to suspended thread unsupported");
+        return Status("Passing signal to suspended thread unsupported");
 
       ret = thread.Suspend();
       break;
 
     default:
-      return Status::FromErrorStringWithFormat(
+      return Status(
           "NativeProcessFreeBSD::%s (): unexpected state %s specified "
           "for pid %" PRIu64 ", tid %" PRIu64,
           __FUNCTION__, StateAsCString(action->state), GetID(), thread.GetID());
@@ -523,7 +500,7 @@ Status NativeProcessFreeBSD::Halt() {
   if (StateIsStoppedState(m_state, false))
     return error;
   if (kill(GetID(), SIGSTOP) != 0)
-    error = Status::FromErrno();
+    error.SetErrorToErrno();
   return error;
 }
 
@@ -544,7 +521,7 @@ Status NativeProcessFreeBSD::Signal(int signo) {
   Status error;
 
   if (kill(GetID(), signo))
-    error = Status::FromErrno();
+    error.SetErrorToErrno();
 
   return error;
 }
@@ -587,7 +564,7 @@ Status NativeProcessFreeBSD::GetMemoryRegionInfo(lldb::addr_t load_addr,
 
   if (m_supports_mem_region == LazyBool::eLazyBoolNo) {
     // We're done.
-    return Status::FromErrorString("unsupported");
+    return Status("unsupported");
   }
 
   Status error = PopulateMemoryRegionCache();
@@ -655,7 +632,7 @@ Status NativeProcessFreeBSD::PopulateMemoryRegionCache() {
   ret = ::sysctl(mib, 4, nullptr, &len, nullptr, 0);
   if (ret != 0) {
     m_supports_mem_region = LazyBool::eLazyBoolNo;
-    return Status::FromErrorString("sysctl() for KERN_PROC_VMMAP failed");
+    return Status("sysctl() for KERN_PROC_VMMAP failed");
   }
 
   std::unique_ptr<WritableMemoryBuffer> buf =
@@ -663,7 +640,7 @@ Status NativeProcessFreeBSD::PopulateMemoryRegionCache() {
   ret = ::sysctl(mib, 4, buf->getBufferStart(), &len, nullptr, 0);
   if (ret != 0) {
     m_supports_mem_region = LazyBool::eLazyBoolNo;
-    return Status::FromErrorString("sysctl() for KERN_PROC_VMMAP failed");
+    return Status("sysctl() for KERN_PROC_VMMAP failed");
   }
 
   char *bp = buf->getBufferStart();
@@ -708,7 +685,7 @@ Status NativeProcessFreeBSD::PopulateMemoryRegionCache() {
     LLDB_LOG(log, "failed to find any vmmap entries, assuming no support "
                   "for memory region metadata retrieval");
     m_supports_mem_region = LazyBool::eLazyBoolNo;
-    return Status::FromErrorString("not supported");
+    return Status("not supported");
   }
   LLDB_LOG(log, "read {0} memory region entries from process {1}",
            m_mem_region_cache.size(), GetID());
@@ -730,12 +707,8 @@ Status NativeProcessFreeBSD::SetBreakpoint(lldb::addr_t addr, uint32_t size,
 Status NativeProcessFreeBSD::GetLoadedModuleFileSpec(const char *module_path,
                                                      FileSpec &file_spec) {
   Status error = PopulateMemoryRegionCache();
-  if (error.Fail()) {
-    auto status = CanTrace();
-    if (status.Fail())
-      return status;
+  if (error.Fail())
     return error;
-  }
 
   FileSpec module_file_spec(module_path);
   FileSystem::Instance().Resolve(module_file_spec);
@@ -747,9 +720,8 @@ Status NativeProcessFreeBSD::GetLoadedModuleFileSpec(const char *module_path,
       return Status();
     }
   }
-  return Status::FromErrorStringWithFormat(
-      "Module file (%s) not found in process' memory map!",
-      module_file_spec.GetFilename().AsCString());
+  return Status("Module file (%s) not found in process' memory map!",
+                module_file_spec.GetFilename().AsCString());
 }
 
 Status
@@ -757,12 +729,8 @@ NativeProcessFreeBSD::GetFileLoadAddress(const llvm::StringRef &file_name,
                                          lldb::addr_t &load_addr) {
   load_addr = LLDB_INVALID_ADDRESS;
   Status error = PopulateMemoryRegionCache();
-  if (error.Fail()) {
-    auto status = CanTrace();
-    if (status.Fail())
-      return status;
+  if (error.Fail())
     return error;
-  }
 
   FileSpec file(file_name);
   for (const auto &it : m_mem_region_cache) {
@@ -771,8 +739,7 @@ NativeProcessFreeBSD::GetFileLoadAddress(const llvm::StringRef &file_name,
       return Status();
     }
   }
-  return Status::FromErrorStringWithFormat("No load address found for file %s.",
-                                           file_name.str().c_str());
+  return Status("No load address found for file %s.", file_name.str().c_str());
 }
 
 void NativeProcessFreeBSD::SigchldHandler() {

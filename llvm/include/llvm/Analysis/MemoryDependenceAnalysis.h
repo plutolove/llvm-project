@@ -29,6 +29,7 @@
 namespace llvm {
 
 class AssumptionCache;
+class BatchAAResults;
 class DominatorTree;
 class PHITransAddr;
 

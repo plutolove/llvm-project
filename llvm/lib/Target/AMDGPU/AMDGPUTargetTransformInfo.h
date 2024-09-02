@@ -137,16 +137,15 @@ public:
                                     unsigned AddrSpace) const;
 
   int64_t getMaxMemIntrinsicInlineSizeThreshold() const;
-  Type *
-  getMemcpyLoopLoweringType(LLVMContext &Context, Value *Length,
-                            unsigned SrcAddrSpace, unsigned DestAddrSpace,
-                            Align SrcAlign, Align DestAlign,
-                            std::optional<uint32_t> AtomicElementSize) const;
+  Type *getMemcpyLoopLoweringType(
+      LLVMContext & Context, Value * Length, unsigned SrcAddrSpace,
+      unsigned DestAddrSpace, unsigned SrcAlign, unsigned DestAlign,
+      std::optional<uint32_t> AtomicElementSize) const;
 
   void getMemcpyLoopResidualLoweringType(
       SmallVectorImpl<Type *> &OpsOut, LLVMContext &Context,
       unsigned RemainingBytes, unsigned SrcAddrSpace, unsigned DestAddrSpace,
-      Align SrcAlign, Align DestAlign,
+      unsigned SrcAlign, unsigned DestAlign,
       std::optional<uint32_t> AtomicCpySize) const;
   unsigned getMaxInterleaveFactor(ElementCount VF);
 
@@ -156,7 +155,7 @@ public:
       unsigned Opcode, Type *Ty, TTI::TargetCostKind CostKind,
       TTI::OperandValueInfo Op1Info = {TTI::OK_AnyValue, TTI::OP_None},
       TTI::OperandValueInfo Op2Info = {TTI::OK_AnyValue, TTI::OP_None},
-      ArrayRef<const Value *> Args = std::nullopt,
+      ArrayRef<const Value *> Args = ArrayRef<const Value *>(),
       const Instruction *CxtI = nullptr);
 
   InstructionCost getCFInstrCost(unsigned Opcode, TTI::TargetCostKind CostKind,
@@ -235,8 +234,7 @@ public:
                                  ArrayRef<int> Mask,
                                  TTI::TargetCostKind CostKind, int Index,
                                  VectorType *SubTp,
-                                 ArrayRef<const Value *> Args = std::nullopt,
-                                 const Instruction *CxtI = nullptr);
+                                 ArrayRef<const Value *> Args = std::nullopt);
 
   bool areInlineCompatible(const Function *Caller,
                            const Function *Callee) const;

@@ -14,9 +14,7 @@ add_flang_library(flangFrontend
   TextDiagnostic.cpp
 
   DEPENDS
-  CUFDialect
   FIRDialect
-  FIROptCodeGenPassIncGen
   FIROptTransformsPassIncGen
   HLFIRDialect
   MLIRIR
@@ -24,7 +22,6 @@ add_flang_library(flangFrontend
   ${extension_libs}
 
   LINK_LIBS
-  CUFDialect
   FortranParser
   FortranSemantics
   FortranEvaluate
@@ -38,7 +35,6 @@ add_flang_library(flangFrontend
   FIRTransforms
   HLFIRDialect
   HLFIRTransforms
-  FlangOpenMPTransforms
   MLIRTransforms
   MLIRBuiltinToLLVMIRTranslation
   MLIRLLVMToLLVMIRTranslation
@@ -51,7 +47,6 @@ add_flang_library(flangFrontend
   Passes
   Analysis
   Extensions
-  IRPrinter
   IRReader
   Option
   Support

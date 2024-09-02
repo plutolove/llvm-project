@@ -18,12 +18,8 @@ using namespace lldb;
 
 TEST(StatusTest, Formatv) {
   EXPECT_EQ("", llvm::formatv("{0}", Status()).str());
-  EXPECT_EQ(
-      "Hello Status",
-      llvm::formatv("{0}", Status::FromErrorString("Hello Status")).str());
-  EXPECT_EQ(
-      "Hello",
-      llvm::formatv("{0:5}", Status::FromErrorString("Hello Error")).str());
+  EXPECT_EQ("Hello Status", llvm::formatv("{0}", Status("Hello Status")).str());
+  EXPECT_EQ("Hello", llvm::formatv("{0:5}", Status("Hello Error")).str());
 }
 
 TEST(StatusTest, ErrorConstructor) {
@@ -63,7 +59,7 @@ TEST(StatusTest, ErrorConversion) {
   EXPECT_EQ(EAGAIN, ec.value());
   EXPECT_EQ(std::generic_category(), ec.category());
 
-  llvm::Error foo = Status::FromErrorString("foo").ToError();
+  llvm::Error foo = Status("foo").ToError();
   EXPECT_TRUE(bool(foo));
   EXPECT_EQ("foo", llvm::toString(std::move(foo)));
 }
@@ -84,16 +80,16 @@ TEST(StatusTest, ErrorWin32) {
   // formatted messages will be different.
   bool skip = wcscmp(L"en-US", name) != 0;
 
-  Status s = Status(ERROR_ACCESS_DENIED, ErrorType::eErrorTypeWin32);
+  auto s = Status(ERROR_ACCESS_DENIED, ErrorType::eErrorTypeWin32);
   EXPECT_TRUE(s.Fail());
   if (!skip)
     EXPECT_STREQ("Access is denied. ", s.AsCString());
 
-  s = Status(ERROR_IPSEC_IKE_TIMED_OUT, ErrorType::eErrorTypeWin32);
+  s.SetError(ERROR_IPSEC_IKE_TIMED_OUT, ErrorType::eErrorTypeWin32);
   if (!skip)
     EXPECT_STREQ("Negotiation timed out ", s.AsCString());
 
-  s = Status(16000, ErrorType::eErrorTypeWin32);
+  s.SetError(16000, ErrorType::eErrorTypeWin32);
   if (!skip)
     EXPECT_STREQ("unknown error", s.AsCString());
 }

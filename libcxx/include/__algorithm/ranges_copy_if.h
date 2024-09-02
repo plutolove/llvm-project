@@ -36,7 +36,8 @@ namespace ranges {
 template <class _Ip, class _Op>
 using copy_if_result = in_out_result<_Ip, _Op>;
 
-struct __copy_if {
+namespace __copy_if {
+struct __fn {
   template <class _InIter, class _Sent, class _OutIter, class _Proj, class _Pred>
   _LIBCPP_HIDE_FROM_ABI static constexpr copy_if_result<_InIter, _OutIter>
   __copy_if_impl(_InIter __first, _Sent __last, _OutIter __result, _Pred& __pred, _Proj& __proj) {
@@ -70,9 +71,10 @@ struct __copy_if {
     return __copy_if_impl(ranges::begin(__r), ranges::end(__r), std::move(__result), __pred, __proj);
   }
 };
+} // namespace __copy_if
 
 inline namespace __cpo {
-inline constexpr auto copy_if = __copy_if{};
+inline constexpr auto copy_if = __copy_if::__fn{};
 } // namespace __cpo
 } // namespace ranges
 

@@ -13,31 +13,26 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-jitlink.h"
+
 #include "llvm/BinaryFormat/Magic.h"
-#include "llvm/Config/llvm-config.h" // for LLVM_ON_UNIX, LLVM_ENABLE_THREADS
 #include "llvm/ExecutionEngine/Orc/COFFPlatform.h"
 #include "llvm/ExecutionEngine/Orc/COFFVCRuntimeSupport.h"
 #include "llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h"
 #include "llvm/ExecutionEngine/Orc/Debugging/DebugInfoSupport.h"
 #include "llvm/ExecutionEngine/Orc/Debugging/DebuggerSupportPlugin.h"
 #include "llvm/ExecutionEngine/Orc/Debugging/PerfSupportPlugin.h"
-#include "llvm/ExecutionEngine/Orc/Debugging/VTuneSupportPlugin.h"
 #include "llvm/ExecutionEngine/Orc/ELFNixPlatform.h"
 #include "llvm/ExecutionEngine/Orc/EPCDebugObjectRegistrar.h"
 #include "llvm/ExecutionEngine/Orc/EPCDynamicLibrarySearchGenerator.h"
 #include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/IndirectionUtils.h"
-#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
-#include "llvm/ExecutionEngine/Orc/LoadLinkableFile.h"
 #include "llvm/ExecutionEngine/Orc/MachOPlatform.h"
 #include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/ObjectFileInterface.h"
-#include "llvm/ExecutionEngine/Orc/SectCreate.h"
 #include "llvm/ExecutionEngine/Orc/Shared/OrcRTBridge.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderPerf.h"
-#include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderVTune.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
@@ -60,6 +55,7 @@
 #include "llvm/Support/Process.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Timer.h"
+
 #include <cstring>
 #include <deque>
 #include <string>
@@ -151,10 +147,6 @@ static cl::opt<bool> PerfSupport("perf-support",
                                  cl::init(false), cl::Hidden,
                                  cl::cat(JITLinkCategory));
 
-static cl::opt<bool> VTuneSupport("vtune-support",
-                                  cl::desc("Enable vtune profiling support"),
-                                  cl::init(false), cl::Hidden,
-                                  cl::cat(JITLinkCategory));
 static cl::opt<bool>
     NoProcessSymbols("no-process-syms",
                      cl::desc("Do not resolve to llvm-jitlink process symbols"),
@@ -169,12 +161,6 @@ static cl::list<std::string>
     Aliases("alias",
             cl::desc("Inject symbol aliases (syntax: <alias-name>=<aliasee>)"),
             cl::cat(JITLinkCategory));
-
-static cl::list<std::string>
-    SectCreate("sectcreate",
-               cl::desc("given <sectname>,<filename>[@<sym>=<offset>,...]  "
-                        "add the content of <filename> to <sectname>"),
-               cl::cat(JITLinkCategory));
 
 static cl::list<std::string> TestHarnesses("harness", cl::Positional,
                                            cl::desc("Test harness files"),
@@ -261,10 +247,6 @@ static cl::opt<bool> UseSharedMemory(
     cl::desc("Use shared memory to transfer generated code and data"),
     cl::init(false), cl::cat(JITLinkCategory));
 
-static cl::opt<std::string>
-    OverrideTriple("triple", cl::desc("Override target triple detection"),
-                   cl::init(""), cl::cat(JITLinkCategory));
-
 static ExitOnError ExitOnErr;
 
 static LLVM_ATTRIBUTE_USED void linkComponents() {
@@ -275,10 +257,7 @@ static LLVM_ATTRIBUTE_USED void linkComponents() {
          << (void *)&llvm_orc_registerJITLoaderGDBAllocAction << '\n'
          << (void *)&llvm_orc_registerJITLoaderPerfStart << '\n'
          << (void *)&llvm_orc_registerJITLoaderPerfEnd << '\n'
-         << (void *)&llvm_orc_registerJITLoaderPerfImpl << '\n'
-         << (void *)&llvm_orc_registerVTuneImpl << '\n'
-         << (void *)&llvm_orc_unregisterVTuneImpl << '\n'
-         << (void *)&llvm_orc_test_registerVTuneImpl << '\n';
+         << (void *)&llvm_orc_registerJITLoaderPerfImpl << '\n';
 }
 
 static bool UseTestResultOverride = false;
@@ -812,8 +791,8 @@ static Expected<std::unique_ptr<ExecutorProcessControl>> launchExecutor() {
     S.CreateMemoryManager = createSharedMemoryManager;
 
   return SimpleRemoteEPC::Create<FDSimpleRemoteEPCTransport>(
-      std::make_unique<DynamicThreadPoolTaskDispatcher>(std::nullopt),
-      std::move(S), FromExecutor[ReadEnd], ToExecutor[WriteEnd]);
+      std::make_unique<DynamicThreadPoolTaskDispatcher>(), std::move(S),
+      FromExecutor[ReadEnd], ToExecutor[WriteEnd]);
 #endif
 }
 
@@ -902,7 +881,7 @@ static Expected<std::unique_ptr<ExecutorProcessControl>> connectToExecutor() {
     S.CreateMemoryManager = createSharedMemoryManager;
 
   return SimpleRemoteEPC::Create<FDSimpleRemoteEPCTransport>(
-      std::make_unique<DynamicThreadPoolTaskDispatcher>(std::nullopt),
+      std::make_unique<DynamicThreadPoolTaskDispatcher>(),
       std::move(S), *SockFD, *SockFD);
 #endif
 }
@@ -1018,14 +997,6 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
         this->ES.getExecutorProcessControl(), *ProcessSymsJD, true, true)));
   }
 
-  if (VTuneSupport && TT.isOSBinFormatELF()) {
-    ObjLayer.addPlugin(ExitOnErr(DebugInfoPreservationPlugin::Create()));
-    ObjLayer.addPlugin(ExitOnErr(
-        VTuneSupportPlugin::Create(this->ES.getExecutorProcessControl(),
-                                   *ProcessSymsJD, /*EmitDebugInfo=*/true,
-                                   /*TestMode=*/true)));
-  }
-
   // Set up the platform.
   if (!OrcRuntime.empty()) {
     assert(ProcessSymsJD && "ProcessSymsJD should have been set");
@@ -1106,10 +1077,7 @@ Session::Session(std::unique_ptr<ExecutorProcessControl> EPC, Error &Err)
   for (auto &HarnessFile : TestHarnesses) {
     HarnessFiles.insert(HarnessFile);
 
-    auto ObjBuffer =
-        ExitOnErr(loadLinkableFile(HarnessFile, ES.getTargetTriple(),
-                                   LoadArchives::Never))
-            .first;
+    auto ObjBuffer = ExitOnErr(getFile(HarnessFile));
 
     auto ObjInterface =
         ExitOnErr(getObjectFileInterface(ES, ObjBuffer->getMemBufferRef()));
@@ -1426,14 +1394,6 @@ Session::findSymbolInfo(StringRef SymbolName, Twine ErrorMsgStem) {
 static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
   static std::pair<Triple, SubtargetFeatures> FirstTTAndFeatures = []() {
     assert(!InputFiles.empty() && "InputFiles can not be empty");
-
-    if (!OverrideTriple.empty()) {
-      LLVM_DEBUG({
-        dbgs() << "Triple from -triple override: " << OverrideTriple << "\n";
-      });
-      return std::make_pair(Triple(OverrideTriple), SubtargetFeatures());
-    }
-
     for (auto InputFile : InputFiles) {
       auto ObjBuffer = ExitOnErr(getFile(InputFile));
       file_magic Magic = identify_magic(ObjBuffer->getBuffer());
@@ -1452,25 +1412,13 @@ static std::pair<Triple, SubtargetFeatures> getFirstFileTripleAndFeatures() {
         SubtargetFeatures Features;
         if (auto ObjFeatures = Obj->getFeatures())
           Features = std::move(*ObjFeatures);
-
-        LLVM_DEBUG({
-          dbgs() << "Triple from " << InputFile << ": " << TT.str() << "\n";
-        });
         return std::make_pair(TT, Features);
       }
       default:
         break;
       }
     }
-
-    // If no plain object file inputs exist to pin down the triple then detect
-    // the host triple and default to that.
-    auto JTMB = ExitOnErr(JITTargetMachineBuilder::detectHost());
-    LLVM_DEBUG({
-      dbgs() << "Triple from host-detection: " << JTMB.getTargetTriple().str()
-             << "\n";
-    });
-    return std::make_pair(JTMB.getTargetTriple(), JTMB.getFeatures());
+    return std::make_pair(Triple(), SubtargetFeatures());
   }();
 
   return FirstTTAndFeatures;
@@ -1718,66 +1666,14 @@ static Error addAliases(Session &S,
   return Error::success();
 }
 
-static Error addSectCreates(Session &S,
-                            const std::map<unsigned, JITDylib *> &IdxToJD) {
-  for (auto SCItr = SectCreate.begin(), SCEnd = SectCreate.end();
-       SCItr != SCEnd; ++SCItr) {
-
-    unsigned SCArgIdx = SectCreate.getPosition(SCItr - SectCreate.begin());
-    auto &JD = *std::prev(IdxToJD.lower_bound(SCArgIdx))->second;
-
-    StringRef SCArg(*SCItr);
-
-    auto [SectAndFileName, ExtraSymbolsString] = SCArg.split('@');
-    auto [SectName, FileName] = SectAndFileName.rsplit(',');
-    if (SectName.empty())
-      return make_error<StringError>("In -sectcreate=" + SCArg +
-                                         ", filename component cannot be empty",
-                                     inconvertibleErrorCode());
-    if (FileName.empty())
-      return make_error<StringError>("In -sectcreate=" + SCArg +
-                                         ", filename component cannot be empty",
-                                     inconvertibleErrorCode());
-
-    auto Content = getFile(FileName);
-    if (!Content)
-      return Content.takeError();
-
-    SectCreateMaterializationUnit::ExtraSymbolsMap ExtraSymbols;
-    while (!ExtraSymbolsString.empty()) {
-      StringRef NextSymPair;
-      std::tie(NextSymPair, ExtraSymbolsString) = ExtraSymbolsString.split(',');
-
-      auto [Sym, OffsetString] = NextSymPair.split('=');
-      size_t Offset;
-
-      if (OffsetString.getAsInteger(0, Offset))
-        return make_error<StringError>("In -sectcreate=" + SCArg + ", " +
-                                           OffsetString +
-                                           " is not a valid integer",
-                                       inconvertibleErrorCode());
-
-      ExtraSymbols[S.ES.intern(Sym)] = {JITSymbolFlags::Exported, Offset};
-    }
-
-    if (auto Err = JD.define(std::make_unique<SectCreateMaterializationUnit>(
-            S.ObjLayer, SectName.str(), MemProt::Read, 16, std::move(*Content),
-            std::move(ExtraSymbols))))
-      return Err;
-  }
-
-  return Error::success();
-}
-
 static Error addTestHarnesses(Session &S) {
   LLVM_DEBUG(dbgs() << "Adding test harness objects...\n");
   for (auto HarnessFile : TestHarnesses) {
     LLVM_DEBUG(dbgs() << "  " << HarnessFile << "\n");
-    auto Linkable = loadLinkableFile(HarnessFile, S.ES.getTargetTriple(),
-                                     LoadArchives::Never);
-    if (!Linkable)
-      return Linkable.takeError();
-    if (auto Err = S.ObjLayer.add(*S.MainJD, std::move(Linkable->first)))
+    auto ObjBuffer = getFile(HarnessFile);
+    if (!ObjBuffer)
+      return ObjBuffer.takeError();
+    if (auto Err = S.ObjLayer.add(*S.MainJD, std::move(*ObjBuffer)))
       return Err;
   }
   return Error::success();
@@ -1799,22 +1695,21 @@ static Error addObjects(Session &S,
     auto &JD = *std::prev(IdxToJD.lower_bound(InputFileArgIdx))->second;
     LLVM_DEBUG(dbgs() << "  " << InputFileArgIdx << ": \"" << InputFile
                       << "\" to " << JD.getName() << "\n";);
-    auto ObjBuffer = loadLinkableFile(InputFile, S.ES.getTargetTriple(),
-                                      LoadArchives::Never);
+    auto ObjBuffer = getFile(InputFile);
     if (!ObjBuffer)
       return ObjBuffer.takeError();
 
     if (S.HarnessFiles.empty()) {
-      if (auto Err = S.ObjLayer.add(JD, std::move(ObjBuffer->first)))
+      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer)))
         return Err;
     } else {
       // We're in -harness mode. Use a custom interface for this
       // test object.
       auto ObjInterface =
-          getTestObjectFileInterface(S, ObjBuffer->first->getMemBufferRef());
+          getTestObjectFileInterface(S, (*ObjBuffer)->getMemBufferRef());
       if (!ObjInterface)
         return ObjInterface.takeError();
-      if (auto Err = S.ObjLayer.add(JD, std::move(ObjBuffer->first),
+      if (auto Err = S.ObjLayer.add(JD, std::move(*ObjBuffer),
                                     std::move(*ObjInterface)))
         return Err;
     }
@@ -2119,9 +2014,6 @@ static Error addSessionInputs(Session &S) {
     return Err;
 
   if (auto Err = addAliases(S, IdxToJD))
-    return Err;
-
-  if (auto Err = addSectCreates(S, IdxToJD))
     return Err;
 
   if (!TestHarnesses.empty())

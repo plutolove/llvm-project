@@ -290,16 +290,15 @@ static Instruction *simplifyNvvmIntrinsic(IntrinsicInst *II, InstCombiner &IC) {
     case Intrinsic::nvvm_d2ull_rz:
     case Intrinsic::nvvm_f2ull_rz:
       return {Instruction::FPToUI};
-    // Integer to floating-point uses RN rounding, not RZ
-    case Intrinsic::nvvm_i2d_rn:
-    case Intrinsic::nvvm_i2f_rn:
-    case Intrinsic::nvvm_ll2d_rn:
-    case Intrinsic::nvvm_ll2f_rn:
+    case Intrinsic::nvvm_i2d_rz:
+    case Intrinsic::nvvm_i2f_rz:
+    case Intrinsic::nvvm_ll2d_rz:
+    case Intrinsic::nvvm_ll2f_rz:
       return {Instruction::SIToFP};
-    case Intrinsic::nvvm_ui2d_rn:
-    case Intrinsic::nvvm_ui2f_rn:
-    case Intrinsic::nvvm_ull2d_rn:
-    case Intrinsic::nvvm_ull2f_rn:
+    case Intrinsic::nvvm_ui2d_rz:
+    case Intrinsic::nvvm_ui2f_rz:
+    case Intrinsic::nvvm_ull2d_rz:
+    case Intrinsic::nvvm_ull2f_rz:
       return {Instruction::UIToFP};
 
     // NVVM intrinsics that map to LLVM binary ops.

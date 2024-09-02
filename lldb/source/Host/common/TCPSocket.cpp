@@ -183,7 +183,7 @@ Status TCPSocket::Connect(llvm::StringRef name) {
     return error;
   }
 
-  error = Status::FromErrorString("Failed to connect port");
+  error.SetErrorString("Failed to connect port");
   return error;
 }
 
@@ -257,7 +257,7 @@ void TCPSocket::CloseListenSockets() {
 Status TCPSocket::Accept(Socket *&conn_socket) {
   Status error;
   if (m_listen_sockets.size() == 0) {
-    error = Status::FromErrorString("No open listening sockets!");
+    error.SetErrorString("No open listening sockets!");
     return error;
   }
 

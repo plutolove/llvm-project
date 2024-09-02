@@ -3,7 +3,6 @@ set(LLVM_LINK_COMPONENTS
   AsmParser
   BitWriter
   Core
-  ProfileData
   Support
   TransformUtils
   Passes
@@ -33,3 +32,5 @@ add_llvm_unittest(UtilsTests
   ValueMapperTest.cpp
   ProfDataUtilTest.cpp
   )
+
+set_property(TARGET UtilsTests PROPERTY FOLDER "Tests/UnitTests/TransformsTests")

@@ -65,7 +65,7 @@
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
-#if __has_include(<link.h>)
+#if HAVE_LINK_H
 #include <link.h>
 #endif
 #ifdef HAVE__UNWIND_BACKTRACE
@@ -289,7 +289,7 @@ static void CreateSigAltStack() {}
 static void RegisterHandlers() { // Not signal-safe.
   // The mutex prevents other threads from registering handlers while we're
   // doing it. We also have to protect the handlers and their count because
-  // a signal handler could fire while we're registering handlers.
+  // a signal handler could fire while we're registeting handlers.
   static ManagedStatic<sys::SmartMutex<true>> SignalHandlerRegistrationMutex;
   sys::SmartScopedLock<true> Guard(*SignalHandlerRegistrationMutex);
 
@@ -464,7 +464,7 @@ void llvm::sys::AddSignalHandler(sys::SignalHandlerCallback FnPtr,
   RegisterHandlers();
 }
 
-#if ENABLE_BACKTRACES && defined(HAVE_BACKTRACE) &&                            \
+#if ENABLE_BACKTRACES && defined(HAVE_BACKTRACE) && HAVE_LINK_H &&             \
     (defined(__linux__) || defined(__FreeBSD__) ||                             \
      defined(__FreeBSD_kernel__) || defined(__NetBSD__))
 struct DlIteratePhdrData {

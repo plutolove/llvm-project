@@ -79,8 +79,7 @@ static void addScopeToFunction(LLVM::LLVMFuncOp llvmFunc,
       context, id, compileUnitAttr, fileAttr, funcNameAttr, funcNameAttr,
       fileAttr,
       /*line=*/line,
-      /*scopeline=*/col, subprogramFlags, subroutineTypeAttr,
-      /*retainedNodes=*/{});
+      /*scopeline=*/col, subprogramFlags, subroutineTypeAttr);
   llvmFunc->setLoc(FusedLoc::get(context, {loc}, subprogramAttr));
 }
 
@@ -116,9 +115,9 @@ struct DIScopeForLLVMFuncOp
       }
 
       compileUnitAttr = LLVM::DICompileUnitAttr::get(
-          DistinctAttr::create(UnitAttr::get(context)), llvm::dwarf::DW_LANG_C,
-          fileAttr, StringAttr::get(context, "MLIR"),
-          /*isOptimized=*/true, emissionKind);
+          context, DistinctAttr::create(UnitAttr::get(context)),
+          llvm::dwarf::DW_LANG_C, fileAttr, StringAttr::get(context, "MLIR"),
+          /*isOptimized=*/true, LLVM::DIEmissionKind::LineTablesOnly);
     }
 
     // Create subprograms for each function with the same distinct compile unit.

@@ -86,17 +86,6 @@ def OIListTrivial : TEST_Op<"oilist_with_keywords_only"> {
   }];
 }
 
-// Ops related to OIList primitive
-def OIListTrivialProperties : TEST_Op<"oilist_with_keywords_only_properties"> {
-  let arguments = (ins UnitProperty:$keyword, UnitProperty:$otherKeyword,
-                       UnitProperty:$diffNameUnitPropertyKeyword);
-  let assemblyFormat = [{
-    oilist( `keyword` $keyword
-          | `otherKeyword` $otherKeyword
-          | `thirdKeyword` $diffNameUnitPropertyKeyword) attr-dict
-  }];
-}
-
 def OIListSimple : TEST_Op<"oilist_with_simple_args", [AttrSizedOperandSegments]> {
   let arguments = (ins Optional<AnyType>:$arg0,
                        Optional<AnyType>:$arg1,
@@ -403,17 +392,6 @@ def FormatOptionalUnitAttrNoElide
   let assemblyFormat = "($is_optional^)? attr-dict";
 }
 
-def FormatOptionalUnitProperty : TEST_Op<"format_optional_unit_property"> {
-  let arguments = (ins UnitProperty:$is_optional);
-  let assemblyFormat = "(`is_optional` $is_optional^)? attr-dict";
-}
-
-def FormatOptionalUnitPropertyNoElide
-    : TEST_Op<"format_optional_unit_property_no_elide"> {
-  let arguments = (ins UnitProperty:$is_optional);
-  let assemblyFormat = "($is_optional^)? attr-dict";
-}
-
 def FormatOptionalEnumAttr : TEST_Op<"format_optional_enum_attr"> {
   let arguments = (ins OptionalAttr<SomeI64Enum>:$attr);
   let assemblyFormat = "($attr^)? attr-dict";
@@ -654,7 +632,7 @@ def FormatInferTypeOp : TEST_Op<"format_infer_type", [InferTypeOpInterface]> {
   let assemblyFormat = "attr-dict";
 
   let extraClassDeclaration = [{
-    static ::llvm::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
+    static ::mlir::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
           ::std::optional<::mlir::Location> location, ::mlir::ValueRange operands,
           ::mlir::DictionaryAttr attributes, mlir::OpaqueProperties properties, ::mlir::RegionRange regions,
           ::llvm::SmallVectorImpl<::mlir::Type> &inferredReturnTypes) {
@@ -677,7 +655,7 @@ class FormatInferAllTypesBaseOp<string mnemonic, list<Trait> traits = []>
   let arguments = (ins Variadic<AnyType>:$args);
   let results = (outs Variadic<AnyType>:$outs);
   let extraClassDeclaration = [{
-    static ::llvm::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
+    static ::mlir::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
           ::std::optional<::mlir::Location> location, ::mlir::ValueRange operands,
           ::mlir::DictionaryAttr attributes, mlir::OpaqueProperties properties, ::mlir::RegionRange regions,
           ::llvm::SmallVectorImpl<::mlir::Type> &inferredReturnTypes) {
@@ -724,7 +702,7 @@ def FormatInferTypeRegionsOp
   let regions = (region AnyRegion:$region);
   let assemblyFormat = "$region attr-dict";
   let extraClassDeclaration = [{
-    static ::llvm::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
+    static ::mlir::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
           ::std::optional<::mlir::Location> location, ::mlir::ValueRange operands,
           ::mlir::DictionaryAttr attributes, mlir::OpaqueProperties properties, ::mlir::RegionRange regions,
           ::llvm::SmallVectorImpl<::mlir::Type> &inferredReturnTypes) {
@@ -745,7 +723,7 @@ def FormatInferTypeVariadicOperandsOp
   let results = (outs Variadic<AnyType>:$outs);
   let assemblyFormat = "`(` $a `:` type($a) `)` `(` $b `:` type($b) `)` attr-dict";
   let extraClassDeclaration = [{
-    static ::llvm::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
+    static ::mlir::LogicalResult inferReturnTypes(::mlir::MLIRContext *context,
           ::std::optional<::mlir::Location> location, ::mlir::ValueRange operands,
           ::mlir::DictionaryAttr attributes, mlir::OpaqueProperties properties, ::mlir::RegionRange regions,
           ::llvm::SmallVectorImpl<::mlir::Type> &inferredReturnTypes) {

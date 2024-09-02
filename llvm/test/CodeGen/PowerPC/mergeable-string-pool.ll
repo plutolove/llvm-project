@@ -1,6 +1,6 @@
-; RUN: llc -verify-machineinstrs -mtriple powerpc-ibm-aix-xcoff -mcpu=pwr8 -enable-global-merge=false \
+; RUN: llc -verify-machineinstrs -mtriple powerpc-ibm-aix-xcoff -mcpu=pwr8 \
 ; RUN:   -ppc-asm-full-reg-names < %s | FileCheck %s --check-prefixes=AIX32,AIXDATA
-; RUN: llc -verify-machineinstrs -mtriple powerpc64-ibm-aix-xcoff -mcpu=pwr8 -enable-global-merge=false \
+; RUN: llc -verify-machineinstrs -mtriple powerpc64-ibm-aix-xcoff -mcpu=pwr8 \
 ; RUN:   -ppc-asm-full-reg-names < %s | FileCheck %s --check-prefixes=AIX64,AIXDATA
 ; RUN: llc -verify-machineinstrs -mtriple powerpc64-unknown-linux -mcpu=pwr8 \
 ; RUN:   -ppc-asm-full-reg-names < %s | FileCheck %s --check-prefixes=LINUX64BE,LINUXDATA
@@ -1148,7 +1148,7 @@ entry:
 
 attributes #0 = { nounwind }
 
-; AIXDATA: .csect L..__ModuleStringPool[RO],3
+; AIXDATA: .csect L..__ModuleStringPool[RO],2
 ; AIXDATA:       .align  3                               # @__ModuleStringPool
 ; AIXDATA:       .vbyte  4, 5                            # 0x5
 ; AIXDATA:       .vbyte  4, 7                            # 0x7

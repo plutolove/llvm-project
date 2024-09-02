@@ -7,16 +7,13 @@
 //===----------------------------------------------------------------------===//
 //
 // Shared functionality between the new constant expression
-// interpreter (AST/ByteCode/) and the current one (ExprConstant.cpp).
+// interpreter (AST/Interp/) and the current one (ExprConstant.cpp).
 //
 //===----------------------------------------------------------------------===//
 
 #ifndef LLVM_CLANG_LIB_AST_EXPRCONSTSHARED_H
 #define LLVM_CLANG_LIB_AST_EXPRCONSTSHARED_H
 
-namespace llvm {
-class APFloat;
-}
 namespace clang {
 class QualType;
 class LangOptions;
@@ -58,12 +55,5 @@ enum class GCCTypeClass {
 
 GCCTypeClass EvaluateBuiltinClassifyType(QualType T,
                                          const LangOptions &LangOpts);
-
-void HandleComplexComplexMul(llvm::APFloat A, llvm::APFloat B, llvm::APFloat C,
-                             llvm::APFloat D, llvm::APFloat &ResR,
-                             llvm::APFloat &ResI);
-void HandleComplexComplexDiv(llvm::APFloat A, llvm::APFloat B, llvm::APFloat C,
-                             llvm::APFloat D, llvm::APFloat &ResR,
-                             llvm::APFloat &ResI);
 
 #endif

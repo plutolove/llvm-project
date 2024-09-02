@@ -692,12 +692,12 @@ ExtractRuntimeGlobalSymbol(Process *process, ConstString name,
                            uint64_t default_value = LLDB_INVALID_ADDRESS,
                            SymbolType sym_type = lldb::eSymbolTypeData) {
   if (!process) {
-    error = Status::FromErrorString("no process");
+    error.SetErrorString("no process");
     return default_value;
   }
 
   if (!module_sp) {
-    error = Status::FromErrorString("no module");
+    error.SetErrorString("no module");
     return default_value;
   }
 
@@ -707,14 +707,14 @@ ExtractRuntimeGlobalSymbol(Process *process, ConstString name,
       module_sp->FindFirstSymbolWithNameAndType(name, lldb::eSymbolTypeData);
 
   if (!symbol || !symbol->ValueIsAddress()) {
-    error = Status::FromErrorString("no symbol");
+    error.SetErrorString("no symbol");
     return default_value;
   }
 
   lldb::addr_t symbol_load_addr =
       symbol->GetAddressRef().GetLoadAddress(&process->GetTarget());
   if (symbol_load_addr == LLDB_INVALID_ADDRESS) {
-    error = Status::FromErrorString("symbol address invalid");
+    error.SetErrorString("symbol address invalid");
     return default_value;
   }
 
@@ -869,8 +869,8 @@ public:
         break;
 
       default:
-        error = Status::FromErrorStringWithFormat(
-            "unrecognized short option '%c'", short_option);
+        error.SetErrorStringWithFormat("unrecognized short option '%c'",
+                                       short_option);
         break;
       }
 
@@ -897,7 +897,19 @@ public:
                                 eCommandProcessMustBeLaunched |
                                 eCommandProcessMustBePaused),
         m_options() {
-    AddSimpleArgumentList(eArgTypeRegularExpression, eArgRepeatOptional);
+    CommandArgumentEntry arg;
+    CommandArgumentData index_arg;
+
+    // Define the first (and only) variant of this arg.
+    index_arg.arg_type = eArgTypeRegularExpression;
+    index_arg.arg_repetition = eArgRepeatOptional;
+
+    // There is only one variant this argument could be; put it into the
+    // argument entry.
+    arg.push_back(index_arg);
+
+    // Push the data for the first argument into the m_arguments vector.
+    m_arguments.push_back(arg);
   }
 
   ~CommandObjectObjC_ClassTable_Dump() override = default;
@@ -1003,7 +1015,19 @@ public:
             "language objc tagged-pointer info",
             eCommandRequiresProcess | eCommandProcessMustBeLaunched |
                 eCommandProcessMustBePaused) {
-    AddSimpleArgumentList(eArgTypeAddress, eArgRepeatPlus);
+    CommandArgumentEntry arg;
+    CommandArgumentData index_arg;
+
+    // Define the first (and only) variant of this arg.
+    index_arg.arg_type = eArgTypeAddress;
+    index_arg.arg_repetition = eArgRepeatPlus;
+
+    // There is only one variant this argument could be; put it into the
+    // argument entry.
+    arg.push_back(index_arg);
+
+    // Push the data for the first argument into the m_arguments vector.
+    m_arguments.push_back(arg);
   }
 
   ~CommandObjectMultiwordObjC_TaggedPointer_Info() override = default;
@@ -1869,15 +1893,15 @@ AppleObjCRuntimeV2::DynamicClassInfoExtractor::ComputeHelper(
       if (loader->IsFullyInitialized()) {
         switch (exe_ctx.GetTargetRef().GetDynamicClassInfoHelper()) {
         case eDynamicClassInfoHelperAuto:
-          [[fallthrough]];
+          LLVM_FALLTHROUGH;
         case eDynamicClassInfoHelperGetRealizedClassList:
           if (m_runtime.m_has_objc_getRealizedClassList_trylock)
             return DynamicClassInfoExtractor::objc_getRealizedClassList_trylock;
-          [[fallthrough]];
+          LLVM_FALLTHROUGH;
         case eDynamicClassInfoHelperCopyRealizedClassList:
           if (m_runtime.m_has_objc_copyRealizedClassList)
             return DynamicClassInfoExtractor::objc_copyRealizedClassList;
-          [[fallthrough]];
+          LLVM_FALLTHROUGH;
         case eDynamicClassInfoHelperRealizedClassesStruct:
           return DynamicClassInfoExtractor::gdb_objc_realized_classes;
         }
@@ -3154,7 +3178,7 @@ AppleObjCRuntimeV2::TaggedPointerVendorExtended::GetClassDescriptor(
                             << m_objc_debug_taggedpointer_ext_payload_lshift) >>
                            m_objc_debug_taggedpointer_ext_payload_rshift);
   int64_t data_payload_signed =
-      ((int64_t)((uint64_t)unobfuscated
+      ((int64_t)((int64_t)unobfuscated
                  << m_objc_debug_taggedpointer_ext_payload_lshift) >>
        m_objc_debug_taggedpointer_ext_payload_rshift);
 
@@ -3465,6 +3489,6 @@ static void RegisterObjCExceptionRecognizer(Process *process) {
 
   process->GetTarget().GetFrameRecognizerManager().AddRecognizer(
       StackFrameRecognizerSP(new ObjCExceptionThrowFrameRecognizer()),
-      module.GetFilename(), symbols, Mangled::NamePreference::ePreferDemangled,
+      module.GetFilename(), symbols,
       /*first_instruction_only*/ true);
 }

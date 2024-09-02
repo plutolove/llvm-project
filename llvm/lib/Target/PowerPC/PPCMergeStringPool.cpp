@@ -87,8 +87,7 @@ public:
   static char ID;
   PPCMergeStringPool() : ModulePass(ID) {}
 
-  bool doInitialization(Module &M) override { return mergeModuleStringPool(M); }
-  bool runOnModule(Module &M) override { return false; }
+  bool runOnModule(Module &M) override { return mergeModuleStringPool(M); }
 
   StringRef getPassName() const override { return "PPC Merge String Pool"; }
 
@@ -170,9 +169,8 @@ void PPCMergeStringPool::collectCandidateConstants(Module &M) {
     LLVM_DEBUG(dbgs() << "hasInitializer() " << Global.hasInitializer()
                       << "\n");
 
-    // We can only pool non-thread-local constants.
-    if (!Global.isConstant() || !Global.hasInitializer() ||
-        Global.isThreadLocal())
+    // We can only pool constants.
+    if (!Global.isConstant() || !Global.hasInitializer())
       continue;
 
     // If a global constant has a section we do not try to pool it because
@@ -281,17 +279,6 @@ bool PPCMergeStringPool::mergeModuleStringPool(Module &M) {
     // Access to the pooled constant strings require an offset. Add a GEP
     // before every use in order to compute this offset.
     replaceUsesWithGEP(GV, PooledGlobal, ElementIndex);
-
-    // Replace all the uses by metadata.
-    if (GV->isUsedByMetadata()) {
-      Constant *Indices[2] = {
-          ConstantInt::get(Type::getInt32Ty(*Context), 0),
-          ConstantInt::get(Type::getInt32Ty(*Context), ElementIndex)};
-      Constant *ConstGEP = ConstantExpr::getInBoundsGetElementPtr(
-          PooledStructType, PooledGlobal, Indices);
-      ValueAsMetadata::handleRAUW(GV, ConstGEP);
-    }
-    assert(!GV->isUsedByMetadata() && "Should be no metadata use anymore");
 
     // This GV has no more uses so we can erase it.
     if (GV->use_empty())

@@ -164,7 +164,7 @@ private:
       writeHTML();
 
     llvm::StringRef Path =
-        SM.getFileEntryRefForID(SM.getMainFileID())->getName();
+        SM.getFileEntryForID(SM.getMainFileID())->tryGetRealPathName();
     assert(!Path.empty() && "Main file path not known?");
     llvm::StringRef Code = SM.getBufferData(SM.getMainFileID());
 
@@ -262,9 +262,9 @@ std::function<bool(llvm::StringRef)> headerFilter() {
     return nullptr;
 
   return [OnlyMatches, IgnoreMatches](llvm::StringRef Header) {
-    if (!OnlyHeaders.empty() && !OnlyMatches(Header))
+    if (OnlyHeaders.getNumOccurrences() && !OnlyMatches(Header))
       return true;
-    if (!IgnoreHeaders.empty() && IgnoreMatches(Header))
+    if (IgnoreHeaders.getNumOccurrences() && IgnoreMatches(Header))
       return true;
     return false;
   };

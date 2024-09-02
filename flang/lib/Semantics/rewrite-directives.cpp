@@ -11,7 +11,7 @@
 #include "flang/Parser/parse-tree.h"
 #include "flang/Semantics/semantics.h"
 #include "flang/Semantics/symbol.h"
-#include "llvm/Frontend/OpenMP/OMP.h"
+#include "llvm/Frontend/OpenMP/OMP.h.inc"
 #include <list>
 
 namespace Fortran::semantics {
@@ -88,9 +88,11 @@ bool OmpRewriteMutator::Pre(parser::OpenMPAtomicConstruct &x) {
 
   auto findMemOrderClause =
       [](const std::list<parser::OmpAtomicClause> &clauses) {
-        return llvm::any_of(clauses, [](const auto &clause) {
-          return std::get_if<parser::OmpMemoryOrderClause>(&clause.u);
-        });
+        return std::find_if(
+                   clauses.begin(), clauses.end(), [](const auto &clause) {
+                     return std::get_if<parser::OmpMemoryOrderClause>(
+                         &clause.u);
+                   }) != clauses.end();
       };
 
   // Get the clause list to which the new memory order clause must be added,

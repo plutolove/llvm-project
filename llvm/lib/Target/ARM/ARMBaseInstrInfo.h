@@ -13,21 +13,16 @@
 #ifndef LLVM_LIB_TARGET_ARM_ARMBASEINSTRINFO_H
 #define LLVM_LIB_TARGET_ARM_ARMBASEINSTRINFO_H
 
-#include "ARMBaseRegisterInfo.h"
 #include "MCTargetDesc/ARMBaseInfo.h"
-#include "MCTargetDesc/ARMMCTargetDesc.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
 #include "llvm/CodeGen/MachineInstr.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineOperand.h"
-#include "llvm/CodeGen/MachineRegisterInfo.h"
-#include "llvm/CodeGen/Register.h"
 #include "llvm/CodeGen/TargetInstrInfo.h"
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/IntrinsicsARM.h"
-#include "llvm/Support/ErrorHandling.h"
 #include <array>
 #include <cstdint>
 
@@ -191,13 +186,13 @@ public:
   ///
   unsigned getInstSizeInBytes(const MachineInstr &MI) const override;
 
-  Register isLoadFromStackSlot(const MachineInstr &MI,
+  unsigned isLoadFromStackSlot(const MachineInstr &MI,
                                int &FrameIndex) const override;
-  Register isStoreToStackSlot(const MachineInstr &MI,
+  unsigned isStoreToStackSlot(const MachineInstr &MI,
                               int &FrameIndex) const override;
-  Register isLoadFromStackSlotPostFE(const MachineInstr &MI,
+  unsigned isLoadFromStackSlotPostFE(const MachineInstr &MI,
                                      int &FrameIndex) const override;
-  Register isStoreToStackSlotPostFE(const MachineInstr &MI,
+  unsigned isStoreToStackSlotPostFE(const MachineInstr &MI,
                                     int &FrameIndex) const override;
 
   void copyToCPSR(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
@@ -209,8 +204,7 @@ public:
 
   void copyPhysReg(MachineBasicBlock &MBB, MachineBasicBlock::iterator I,
                    const DebugLoc &DL, MCRegister DestReg, MCRegister SrcReg,
-                   bool KillSrc, bool RenamableDest = false,
-                   bool RenamableSrc = false) const override;
+                   bool KillSrc) const override;
 
   void storeRegToStackSlot(MachineBasicBlock &MBB,
                            MachineBasicBlock::iterator MBBI, Register SrcReg,
@@ -314,9 +308,9 @@ public:
                                SmallPtrSetImpl<MachineInstr *> &SeenMIs,
                                bool) const override;
 
-  /// foldImmediate - 'Reg' is known to be defined by a move immediate
+  /// FoldImmediate - 'Reg' is known to be defined by a move immediate
   /// instruction, try to fold the immediate into the use instruction.
-  bool foldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, Register Reg,
+  bool FoldImmediate(MachineInstr &UseMI, MachineInstr &DefMI, Register Reg,
                      MachineRegisterInfo *MRI) const override;
 
   unsigned getNumMicroOps(const InstrItineraryData *ItinData,
@@ -356,16 +350,12 @@ public:
   /// ARM supports the MachineOutliner.
   bool isFunctionSafeToOutlineFrom(MachineFunction &MF,
                                    bool OutlineFromLinkOnceODRs) const override;
-  std::optional<std::unique_ptr<outliner::OutlinedFunction>>
-  getOutliningCandidateInfo(
-      const MachineModuleInfo &MMI,
-      std::vector<outliner::Candidate> &RepeatedSequenceLocs,
-      unsigned MinRepeats) const override;
+  std::optional<outliner::OutlinedFunction> getOutliningCandidateInfo(
+      std::vector<outliner::Candidate> &RepeatedSequenceLocs) const override;
   void mergeOutliningCandidateAttributes(
       Function &F, std::vector<outliner::Candidate> &Candidates) const override;
-  outliner::InstrType getOutliningTypeImpl(const MachineModuleInfo &MMI,
-                                           MachineBasicBlock::iterator &MIT,
-                                           unsigned Flags) const override;
+  outliner::InstrType getOutliningTypeImpl(MachineBasicBlock::iterator &MIT,
+                                       unsigned Flags) const override;
   bool isMBBSafeToOutlineFrom(MachineBasicBlock &MBB,
                               unsigned &Flags) const override;
   void buildOutlinedFrame(MachineBasicBlock &MBB, MachineFunction &MF,
@@ -546,19 +536,6 @@ public:
 
   std::optional<RegImmPair> isAddImmediate(const MachineInstr &MI,
                                            Register Reg) const override;
-
-  unsigned getUndefInitOpcode(unsigned RegClassID) const override {
-    if (RegClassID == ARM::MQPRRegClass.getID())
-      return ARM::PseudoARMInitUndefMQPR;
-    if (RegClassID == ARM::SPRRegClass.getID())
-      return ARM::PseudoARMInitUndefSPR;
-    if (RegClassID == ARM::DPR_VFP2RegClass.getID())
-      return ARM::PseudoARMInitUndefDPR_VFP2;
-    if (RegClassID == ARM::GPRRegClass.getID())
-      return ARM::PseudoARMInitUndefGPR;
-
-    llvm_unreachable("Unexpected register class.");
-  }
 };
 
 /// Get the operands corresponding to the given \p Pred value. By default, the
@@ -688,7 +665,6 @@ static inline bool isIndirectCall(const MachineInstr &MI) {
   case ARM::BX_CALL:
   case ARM::BMOVPCRX_CALL:
   case ARM::TCRETURNri:
-  case ARM::TCRETURNrinotr12:
   case ARM::TAILJMPr:
   case ARM::TAILJMPr4:
   case ARM::tBLXr:

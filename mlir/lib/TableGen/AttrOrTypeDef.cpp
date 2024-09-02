@@ -184,12 +184,6 @@ bool AttrOrTypeDef::genVerifyDecl() const {
   return def->getValueAsBit("genVerifyDecl");
 }
 
-bool AttrOrTypeDef::genVerifyInvariantsImpl() const {
-  return any_of(parameters, [](const AttrOrTypeParameter &p) {
-    return p.getConstraint() != std::nullopt;
-  });
-}
-
 std::optional<StringRef> AttrOrTypeDef::getExtraDecls() const {
   auto value = def->getValueAsString("extraClassDeclaration");
   return value.empty() ? std::optional<StringRef>() : value;
@@ -336,13 +330,6 @@ std::optional<StringRef> AttrOrTypeParameter::getDefaultValue() const {
 }
 
 llvm::Init *AttrOrTypeParameter::getDef() const { return def->getArg(index); }
-
-std::optional<Constraint> AttrOrTypeParameter::getConstraint() const {
-  if (auto *param = dyn_cast<llvm::DefInit>(getDef()))
-    if (param->getDef()->isSubClassOf("Constraint"))
-      return Constraint(param->getDef());
-  return std::nullopt;
-}
 
 //===----------------------------------------------------------------------===//
 // AttributeSelfTypeParameter

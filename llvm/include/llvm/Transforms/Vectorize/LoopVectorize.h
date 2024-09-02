@@ -67,7 +67,6 @@ class BlockFrequencyInfo;
 class DemandedBits;
 class DominatorTree;
 class Function;
-class Instruction;
 class Loop;
 class LoopAccessInfoManager;
 class LoopInfo;
@@ -188,7 +187,13 @@ public:
                      function_ref<StringRef(StringRef)> MapClassName2PassName);
 
   // Shim for old PM.
-  LoopVectorizeResult runImpl(Function &F);
+  LoopVectorizeResult runImpl(Function &F, ScalarEvolution &SE_, LoopInfo &LI_,
+                              TargetTransformInfo &TTI_, DominatorTree &DT_,
+                              BlockFrequencyInfo *BFI_, TargetLibraryInfo *TLI_,
+                              DemandedBits &DB_, AssumptionCache &AC_,
+                              LoopAccessInfoManager &LAIs_,
+                              OptimizationRemarkEmitter &ORE_,
+                              ProfileSummaryInfo *PSI_);
 
   bool processLoop(Loop *L);
 };
@@ -200,6 +205,13 @@ public:
 void reportVectorizationFailure(const StringRef DebugMsg,
     const StringRef OREMsg, const StringRef ORETag,
     OptimizationRemarkEmitter *ORE, Loop *TheLoop, Instruction *I = nullptr);
+
+/// Reports an informative message: print \p Msg for debugging purposes as well
+/// as an optimization remark. Uses either \p I as location of the remark, or
+/// otherwise \p TheLoop.
+void reportVectorizationInfo(const StringRef OREMsg, const StringRef ORETag,
+                             OptimizationRemarkEmitter *ORE, Loop *TheLoop,
+                             Instruction *I = nullptr);
 
 } // end namespace llvm
 

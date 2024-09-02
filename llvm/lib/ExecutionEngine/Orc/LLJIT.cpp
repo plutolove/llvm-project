@@ -7,7 +7,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
-#include "llvm/Config/llvm-config.h" // for LLVM_ENABLE_THREADS
 #include "llvm/ExecutionEngine/JITLink/EHFrameSupport.h"
 #include "llvm/ExecutionEngine/JITLink/JITLinkMemoryManager.h"
 #include "llvm/ExecutionEngine/Orc/COFFPlatform.h"
@@ -539,7 +538,7 @@ GlobalCtorDtorScraper::operator()(ThreadSafeModule TSM,
 
       for (auto E : COrDtors)
         InitsOrDeInits.push_back(std::make_pair(E.Func, E.Priority));
-      llvm::stable_sort(InitsOrDeInits, llvm::less_second());
+      llvm::sort(InitsOrDeInits, llvm::less_second());
 
       auto *InitOrDeInitFuncEntryBlock =
           BasicBlock::Create(Ctx, "entry", InitOrDeInitFunc);
@@ -668,40 +667,6 @@ Error LLJITBuilderState::prepareForConstruction() {
       return JTMBOrErr.takeError();
   }
 
-  if ((ES || EPC) && NumCompileThreads)
-    return make_error<StringError>(
-        "NumCompileThreads cannot be used with a custom ExecutionSession or "
-        "ExecutorProcessControl",
-        inconvertibleErrorCode());
-
-#if !LLVM_ENABLE_THREADS
-  if (NumCompileThreads)
-    return make_error<StringError>(
-        "LLJIT num-compile-threads is " + Twine(NumCompileThreads) +
-            " but LLVM was compiled with LLVM_ENABLE_THREADS=Off",
-        inconvertibleErrorCode());
-#endif // !LLVM_ENABLE_THREADS
-
-  // Only used in debug builds.
-  [[maybe_unused]] bool ConcurrentCompilationSettingDefaulted =
-      !SupportConcurrentCompilation;
-
-  if (!SupportConcurrentCompilation) {
-#if LLVM_ENABLE_THREADS
-    SupportConcurrentCompilation = NumCompileThreads || ES || EPC;
-#else
-    SupportConcurrentCompilation = false;
-#endif // LLVM_ENABLE_THREADS
-  } else {
-#if !LLVM_ENABLE_THREADS
-    if (*SupportConcurrentCompilation)
-      return make_error<StringError>(
-          "LLJIT concurrent compilation support requested, but LLVM was built "
-          "with LLVM_ENABLE_THREADS=Off",
-          inconvertibleErrorCode());
-#endif // !LLVM_ENABLE_THREADS
-  }
-
   LLVM_DEBUG({
     dbgs() << "  JITTargetMachineBuilder is "
            << JITTargetMachineBuilderPrinter(*JTMB, "  ")
@@ -719,13 +684,11 @@ Error LLJITBuilderState::prepareForConstruction() {
            << (CreateCompileFunction ? "Yes" : "No") << "\n"
            << "  Custom platform-setup function: "
            << (SetUpPlatform ? "Yes" : "No") << "\n"
-           << "  Support concurrent compilation: "
-           << (*SupportConcurrentCompilation ? "Yes" : "No");
-    if (ConcurrentCompilationSettingDefaulted)
-      dbgs() << " (defaulted based on ES / EPC / NumCompileThreads)\n";
+           << "  Number of compile threads: " << NumCompileThreads;
+    if (!NumCompileThreads)
+      dbgs() << " (code will be compiled on the execution thread)\n";
     else
       dbgs() << "\n";
-    dbgs() << "  Number of compile threads: " << NumCompileThreads << "\n";
   });
 
   // Create DL if not specified.
@@ -742,19 +705,7 @@ Error LLJITBuilderState::prepareForConstruction() {
       dbgs() << "ExecutorProcessControl not specified, "
                 "Creating SelfExecutorProcessControl instance\n";
     });
-
-    std::unique_ptr<TaskDispatcher> D = nullptr;
-#if LLVM_ENABLE_THREADS
-    if (*SupportConcurrentCompilation) {
-      std::optional<size_t> NumThreads = std ::nullopt;
-      if (NumCompileThreads)
-        NumThreads = NumCompileThreads;
-      D = std::make_unique<DynamicThreadPoolTaskDispatcher>(NumThreads);
-    } else
-      D = std::make_unique<InPlaceTaskDispatcher>();
-#endif // LLVM_ENABLE_THREADS
-    if (auto EPCOrErr =
-            SelfExecutorProcessControl::Create(nullptr, std::move(D), nullptr))
+    if (auto EPCOrErr = SelfExecutorProcessControl::Create())
       EPC = std::move(*EPCOrErr);
     else
       return EPCOrErr.takeError();
@@ -802,9 +753,8 @@ Error LLJITBuilderState::prepareForConstruction() {
       break;
     }
     if (UseJITLink) {
-      if (!JTMB->getCodeModel())
-        JTMB->setCodeModel(CodeModel::Small);
       JTMB->setRelocationModel(Reloc::PIC_);
+      JTMB->setCodeModel(CodeModel::Small);
       CreateObjectLinkingLayer =
           [](ExecutionSession &ES,
              const Triple &) -> Expected<std::unique_ptr<ObjectLayer>> {
@@ -840,6 +790,8 @@ Error LLJITBuilderState::prepareForConstruction() {
 }
 
 LLJIT::~LLJIT() {
+  if (CompileThreads)
+    CompileThreads->wait();
   if (auto Err = ES->endSession())
     ES->reportError(std::move(Err));
 }
@@ -964,8 +916,9 @@ LLJIT::createCompileFunction(LLJITBuilderState &S,
   if (S.CreateCompileFunction)
     return S.CreateCompileFunction(std::move(JTMB));
 
-  // If using a custom EPC then use a ConcurrentIRCompiler by default.
-  if (*S.SupportConcurrentCompilation)
+  // Otherwise default to creating a SimpleCompiler, or ConcurrentIRCompiler,
+  // depending on the number of threads requested.
+  if (S.NumCompileThreads > 0)
     return std::make_unique<ConcurrentIRCompiler>(std::move(JTMB));
 
   auto TM = JTMB.createTargetMachine();
@@ -1017,8 +970,21 @@ LLJIT::LLJIT(LLJITBuilderState &S, Error &Err)
         std::make_unique<IRTransformLayer>(*ES, *TransformLayer);
   }
 
-  if (*S.SupportConcurrentCompilation)
+  if (S.NumCompileThreads > 0) {
     InitHelperTransformLayer->setCloneToNewContextOnEmit(true);
+    CompileThreads =
+        std::make_unique<ThreadPool>(hardware_concurrency(S.NumCompileThreads));
+    ES->setDispatchTask([this](std::unique_ptr<Task> T) {
+      // FIXME: We should be able to use move-capture here, but ThreadPool's
+      // AsyncTaskTys are std::functions rather than unique_functions
+      // (because MSVC's std::packaged_tasks don't support move-only types).
+      // Fix this when all the above gets sorted out.
+      CompileThreads->async([UnownedT = T.release()]() mutable {
+        std::unique_ptr<Task> T(UnownedT);
+        T->run();
+      });
+    });
+  }
 
   if (S.SetupProcessSymbolsJITDylib) {
     if (auto ProcSymsJD = S.SetupProcessSymbolsJITDylib(*this)) {
@@ -1274,7 +1240,7 @@ LLLazyJIT::LLLazyJIT(LLLazyJITBuilderState &S, Error &Err) : LLJIT(S, Err) {
   CODLayer = std::make_unique<CompileOnDemandLayer>(
       *ES, *InitHelperTransformLayer, *LCTMgr, std::move(ISMBuilder));
 
-  if (*S.SupportConcurrentCompilation)
+  if (S.NumCompileThreads > 0)
     CODLayer->setCloneToNewContextOnEmit(true);
 }
 

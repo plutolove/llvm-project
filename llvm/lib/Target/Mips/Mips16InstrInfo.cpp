@@ -51,7 +51,7 @@ const MipsRegisterInfo &Mips16InstrInfo::getRegisterInfo() const {
 /// the destination along with the FrameIndex of the loaded stack slot.  If
 /// not, return 0.  This predicate must return 0 if the instruction has
 /// any side effects other than loading from the stack slot.
-Register Mips16InstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+unsigned Mips16InstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
                                               int &FrameIndex) const {
   return 0;
 }
@@ -61,7 +61,7 @@ Register Mips16InstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
 /// the source reg along with the FrameIndex of the loaded stack slot.  If
 /// not, return 0.  This predicate must return 0 if the instruction has
 /// any side effects other than storing to the stack slot.
-Register Mips16InstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+unsigned Mips16InstrInfo::isStoreToStackSlot(const MachineInstr &MI,
                                              int &FrameIndex) const {
   return 0;
 }
@@ -69,8 +69,7 @@ Register Mips16InstrInfo::isStoreToStackSlot(const MachineInstr &MI,
 void Mips16InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator I,
                                   const DebugLoc &DL, MCRegister DestReg,
-                                  MCRegister SrcReg, bool KillSrc,
-                                  bool RenamableDest, bool RenamableSrc) const {
+                                  MCRegister SrcReg, bool KillSrc) const {
   unsigned Opc = 0;
 
   if (Mips::CPU16RegsRegClass.contains(DestReg) &&

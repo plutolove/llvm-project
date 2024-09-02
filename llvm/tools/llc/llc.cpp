@@ -130,9 +130,8 @@ static cl::opt<std::string> SplitDwarfFile(
 static cl::opt<bool> NoVerify("disable-verify", cl::Hidden,
                               cl::desc("Do not verify input module"));
 
-static cl::opt<bool>
-    DisableSimplifyLibCalls("disable-simplify-libcalls",
-                            cl::desc("Disable simplify-libcalls"));
+static cl::opt<bool> DisableSimplifyLibCalls("disable-simplify-libcalls",
+                                             cl::desc("Disable simplify-libcalls"));
 
 static cl::opt<bool> ShowMCEncoding("show-mc-encoding", cl::Hidden,
                                     cl::desc("Show encoding in .s output"));
@@ -336,13 +335,13 @@ int main(int argc, char **argv) {
   initializeCodeGen(*Registry);
   initializeLoopStrengthReducePass(*Registry);
   initializeLowerIntrinsicsPass(*Registry);
-  initializePostInlineEntryExitInstrumenterPass(*Registry);
   initializeUnreachableBlockElimLegacyPassPass(*Registry);
   initializeConstantHoistingLegacyPassPass(*Registry);
   initializeScalarOpts(*Registry);
   initializeVectorization(*Registry);
   initializeScalarizeMaskedMemIntrinLegacyPassPass(*Registry);
   initializeExpandReductionsPass(*Registry);
+  initializeExpandVectorPredicationPass(*Registry);
   initializeHardwareLoopsLegacyPass(*Registry);
   initializeTransformUtils(*Registry);
   initializeReplaceWithVeclibLegacyPass(*Registry);
@@ -366,11 +365,15 @@ int main(int argc, char **argv) {
   }
 
   // RemoveDIs debug-info transition: tests may request that we /try/ to use the
-  // new debug-info format.
+  // new debug-info format, if it's built in.
+#ifdef EXPERIMENTAL_DEBUGINFO_ITERATORS
   if (TryUseNewDbgInfoFormat) {
-    // Turn the new debug-info format on.
+    // If LLVM was built with support for this, turn the new debug-info format
+    // on.
     UseNewDbgInfoFormat = true;
   }
+#endif
+  (void)TryUseNewDbgInfoFormat;
 
   if (TimeTrace)
     timeTraceProfilerInitialize(TimeTraceGranularity, argv[0]);

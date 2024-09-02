@@ -29,15 +29,15 @@
 using namespace lldb;
 using namespace lldb_private;
 
-llvm::StringRef TargetList::GetStaticBroadcasterClass() {
-  static constexpr llvm::StringLiteral class_name("lldb.targetList");
+ConstString &TargetList::GetStaticBroadcasterClass() {
+  static ConstString class_name("lldb.targetList");
   return class_name;
 }
 
 // TargetList constructor
 TargetList::TargetList(Debugger &debugger)
     : Broadcaster(debugger.GetBroadcasterManager(),
-                  TargetList::GetStaticBroadcasterClass().str()),
+                  TargetList::GetStaticBroadcasterClass().AsCString()),
       m_target_list(), m_target_list_mutex(), m_selected_target_idx(0) {
   CheckInWithManager();
 }
@@ -88,8 +88,8 @@ Status TargetList::CreateTargetInternal(
   // determine the architecture.
   const ArchSpec arch(triple_str);
   if (!triple_str.empty() && !arch.IsValid()) {
-    error = Status::FromErrorStringWithFormat("invalid triple '%s'",
-                                              triple_str.str().c_str());
+    error.SetErrorStringWithFormat("invalid triple '%s'",
+                                   triple_str.str().c_str());
     return error;
   }
 
@@ -158,7 +158,7 @@ Status TargetList::CreateTargetInternal(
               platform_arch.DumpTriple(platform_arch_strm.AsRawOstream());
               matching_module_spec.GetArchitecture().DumpTriple(
                   module_arch_strm.AsRawOstream());
-              error = Status::FromErrorStringWithFormat(
+              error.SetErrorStringWithFormat(
                   "the specified architecture '%s' is not compatible with '%s' "
                   "in '%s'",
                   platform_arch_strm.GetData(), module_arch_strm.GetData(),
@@ -188,8 +188,7 @@ Status TargetList::CreateTargetInternal(
                 platform_list.GetOrCreate(archs, {}, candidates)) {
           platform_sp = platform_for_archs_sp;
         } else if (candidates.empty()) {
-          error = Status::FromErrorString(
-              "no matching platforms found for this file");
+          error.SetErrorString("no matching platforms found for this file");
           return error;
         } else {
           // More than one platform claims to support this file.
@@ -207,7 +206,7 @@ Status TargetList::CreateTargetInternal(
             platform_set.insert(platform_name);
           }
           error_strm.Printf("), specify an architecture to disambiguate");
-          error = Status(error_strm.GetString().str());
+          error.SetErrorString(error_strm.GetString());
           return error;
         }
       }
@@ -316,12 +315,12 @@ Status TargetList::CreateTargetInternal(Debugger &debugger,
     if (error.Success() && exe_module_sp) {
       if (exe_module_sp->GetObjectFile() == nullptr) {
         if (arch.IsValid()) {
-          error = Status::FromErrorStringWithFormat(
+          error.SetErrorStringWithFormat(
               "\"%s\" doesn't contain architecture %s", file.GetPath().c_str(),
               arch.GetArchitectureName());
         } else {
-          error = Status::FromErrorStringWithFormat(
-              "unsupported file type \"%s\"", file.GetPath().c_str());
+          error.SetErrorStringWithFormat("unsupported file type \"%s\"",
+                                         file.GetPath().c_str());
         }
         return error;
       }
@@ -533,13 +532,9 @@ void TargetList::SetSelectedTarget(uint32_t index) {
 }
 
 void TargetList::SetSelectedTarget(const TargetSP &target_sp) {
-  // Don't allow an invalid target shared pointer or a target that has been
-  // destroyed to become the selected target.
-  if (target_sp && target_sp->IsValid()) {
-    std::lock_guard<std::recursive_mutex> guard(m_target_list_mutex);
-    auto it = llvm::find(m_target_list, target_sp);
-    SetSelectedTargetInternal(std::distance(m_target_list.begin(), it));
-  }
+  std::lock_guard<std::recursive_mutex> guard(m_target_list_mutex);
+  auto it = llvm::find(m_target_list, target_sp);
+  SetSelectedTargetInternal(std::distance(m_target_list.begin(), it));
 }
 
 lldb::TargetSP TargetList::GetSelectedTarget() {

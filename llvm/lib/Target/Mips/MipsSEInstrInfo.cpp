@@ -42,7 +42,7 @@ const MipsRegisterInfo &MipsSEInstrInfo::getRegisterInfo() const {
 /// the destination along with the FrameIndex of the loaded stack slot.  If
 /// not, return 0.  This predicate must return 0 if the instruction has
 /// any side effects other than loading from the stack slot.
-Register MipsSEInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
+unsigned MipsSEInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
                                               int &FrameIndex) const {
   unsigned Opc = MI.getOpcode();
 
@@ -64,7 +64,7 @@ Register MipsSEInstrInfo::isLoadFromStackSlot(const MachineInstr &MI,
 /// the source reg along with the FrameIndex of the loaded stack slot.  If
 /// not, return 0.  This predicate must return 0 if the instruction has
 /// any side effects other than storing to the stack slot.
-Register MipsSEInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
+unsigned MipsSEInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
                                              int &FrameIndex) const {
   unsigned Opc = MI.getOpcode();
 
@@ -83,8 +83,7 @@ Register MipsSEInstrInfo::isStoreToStackSlot(const MachineInstr &MI,
 void MipsSEInstrInfo::copyPhysReg(MachineBasicBlock &MBB,
                                   MachineBasicBlock::iterator I,
                                   const DebugLoc &DL, MCRegister DestReg,
-                                  MCRegister SrcReg, bool KillSrc,
-                                  bool RenamableDest, bool RenamableSrc) const {
+                                  MCRegister SrcReg, bool KillSrc) const {
   unsigned Opc = 0, ZeroReg = 0;
   bool isMicroMips = Subtarget.inMicroMipsMode();
 

@@ -48,19 +48,14 @@ private:
   bool InvalidatingGetEnv = false;
 
   // GetEnv can be treated invalidating and non-invalidating as well.
-  const CallDescription GetEnvCall{CDM::CLibrary, {"getenv"}, 1};
+  const CallDescription GetEnvCall{{"getenv"}, 1};
 
   const CallDescriptionMap<HandlerFn> EnvpInvalidatingFunctions = {
-      {{CDM::CLibrary, {"setenv"}, 3},
-       &InvalidPtrChecker::EnvpInvalidatingCall},
-      {{CDM::CLibrary, {"unsetenv"}, 1},
-       &InvalidPtrChecker::EnvpInvalidatingCall},
-      {{CDM::CLibrary, {"putenv"}, 1},
-       &InvalidPtrChecker::EnvpInvalidatingCall},
-      {{CDM::CLibrary, {"_putenv_s"}, 2},
-       &InvalidPtrChecker::EnvpInvalidatingCall},
-      {{CDM::CLibrary, {"_wputenv_s"}, 2},
-       &InvalidPtrChecker::EnvpInvalidatingCall},
+      {{{"setenv"}, 3}, &InvalidPtrChecker::EnvpInvalidatingCall},
+      {{{"unsetenv"}, 1}, &InvalidPtrChecker::EnvpInvalidatingCall},
+      {{{"putenv"}, 1}, &InvalidPtrChecker::EnvpInvalidatingCall},
+      {{{"_putenv_s"}, 2}, &InvalidPtrChecker::EnvpInvalidatingCall},
+      {{{"_wputenv_s"}, 2}, &InvalidPtrChecker::EnvpInvalidatingCall},
   };
 
   void postPreviousReturnInvalidatingCall(const CallEvent &Call,
@@ -68,13 +63,13 @@ private:
 
   // SEI CERT ENV34-C
   const CallDescriptionMap<HandlerFn> PreviousCallInvalidatingFunctions = {
-      {{CDM::CLibrary, {"setlocale"}, 2},
+      {{{"setlocale"}, 2},
        &InvalidPtrChecker::postPreviousReturnInvalidatingCall},
-      {{CDM::CLibrary, {"strerror"}, 1},
+      {{{"strerror"}, 1},
        &InvalidPtrChecker::postPreviousReturnInvalidatingCall},
-      {{CDM::CLibrary, {"localeconv"}, 0},
+      {{{"localeconv"}, 0},
        &InvalidPtrChecker::postPreviousReturnInvalidatingCall},
-      {{CDM::CLibrary, {"asctime"}, 1},
+      {{{"asctime"}, 1},
        &InvalidPtrChecker::postPreviousReturnInvalidatingCall},
   };
 

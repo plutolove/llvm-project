@@ -17,7 +17,6 @@
 #include "mlir/Dialect/SPIRV/Transforms/SPIRVConversion.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/DialectResourceBlobManager.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -230,41 +229,16 @@ struct ConstantCompositeOpPattern final
     if (!srcType || srcType.getNumElements() == 1)
       return failure();
 
-    // arith.constant should only have vector or tensor types. This is a MLIR
-    // wide problem at the moment.
-    if (!isa<VectorType, RankedTensorType>(srcType))
-      return rewriter.notifyMatchFailure(constOp, "unsupported ShapedType");
+    // arith.constant should only have vector or tenor types.
+    assert((isa<VectorType, RankedTensorType>(srcType)));
 
     Type dstType = getTypeConverter()->convertType(srcType);
     if (!dstType)
       return failure();
 
-    // Import the resource into the IR to make use of the special handling of
-    // element types later on.
-    mlir::DenseElementsAttr dstElementsAttr;
-    if (auto denseElementsAttr =
-            dyn_cast<DenseElementsAttr>(constOp.getValue())) {
-      dstElementsAttr = denseElementsAttr;
-    } else if (auto resourceAttr =
-                   dyn_cast<DenseResourceElementsAttr>(constOp.getValue())) {
-
-      AsmResourceBlob *blob = resourceAttr.getRawHandle().getBlob();
-      if (!blob)
-        return constOp->emitError("could not find resource blob");
-
-      ArrayRef<char> ptr = blob->getData();
-
-      // Check that the buffer meets the requirements to get converted to a
-      // DenseElementsAttr
-      bool detectedSplat = false;
-      if (!DenseElementsAttr::isValidRawBuffer(srcType, ptr, detectedSplat))
-        return constOp->emitError("resource is not a valid buffer");
-
-      dstElementsAttr =
-          DenseElementsAttr::getFromRawBuffer(resourceAttr.getType(), ptr);
-    } else {
-      return constOp->emitError("unsupported elements attribute");
-    }
+    auto dstElementsAttr = dyn_cast<DenseElementsAttr>(constOp.getValue());
+    if (!dstElementsAttr)
+      return failure();
 
     ShapedType dstAttrType = dstElementsAttr.getType();
 
@@ -807,25 +781,6 @@ struct TruncIPattern final : public OpConversionPattern<arith::TruncIOp> {
 // TypeCastingOp
 //===----------------------------------------------------------------------===//
 
-static std::optional<spirv::FPRoundingMode>
-convertArithRoundingModeToSPIRV(arith::RoundingMode roundingMode) {
-  switch (roundingMode) {
-  case arith::RoundingMode::downward:
-    return spirv::FPRoundingMode::RTN;
-  case arith::RoundingMode::to_nearest_even:
-    return spirv::FPRoundingMode::RTE;
-  case arith::RoundingMode::toward_zero:
-    return spirv::FPRoundingMode::RTZ;
-  case arith::RoundingMode::upward:
-    return spirv::FPRoundingMode::RTP;
-  case arith::RoundingMode::to_nearest_away:
-    // SPIR-V FPRoundingMode decoration has no ties-away-from-zero mode
-    // (as of SPIR-V 1.6)
-    return std::nullopt;
-  }
-  llvm_unreachable("Unhandled rounding mode");
-}
-
 /// Converts type-casting standard operations to SPIR-V operations.
 template <typename Op, typename SPIRVOp>
 struct TypeCastingOpPattern final : public OpConversionPattern<Op> {
@@ -848,24 +803,8 @@ struct TypeCastingOpPattern final : public OpConversionPattern<Op> {
       // Then we can just erase this operation by forwarding its operand.
       rewriter.replaceOp(op, adaptor.getOperands().front());
     } else {
-      auto newOp = rewriter.template replaceOpWithNewOp<SPIRVOp>(
-          op, dstType, adaptor.getOperands());
-      if (auto roundingModeOp =
-              dyn_cast<arith::ArithRoundingModeInterface>(*op)) {
-        if (arith::RoundingModeAttr roundingMode =
-                roundingModeOp.getRoundingModeAttr()) {
-          if (auto rm =
-                  convertArithRoundingModeToSPIRV(roundingMode.getValue())) {
-            newOp->setAttr(
-                getDecorationString(spirv::Decoration::FPRoundingMode),
-                spirv::FPRoundingModeAttr::get(rewriter.getContext(), *rm));
-          } else {
-            return rewriter.notifyMatchFailure(
-                op->getLoc(),
-                llvm::formatv("unsupported rounding mode '{0}'", roundingMode));
-          }
-        }
-      }
+      rewriter.template replaceOpWithNewOp<SPIRVOp>(op, dstType,
+                                                    adaptor.getOperands());
     }
     return success();
   }
@@ -1053,9 +992,10 @@ public:
       return failure();
 
     Location loc = op.getLoc();
+    auto *converter = getTypeConverter<SPIRVTypeConverter>();
 
     Value replace;
-    if (bitEnumContainsAll(op.getFastmath(), arith::FastMathFlags::nnan)) {
+    if (converter->getOptions().enableFastMathMode) {
       if (op.getPredicate() == arith::CmpFPredicate::ORD) {
         // Ordered comparsion checks if neither operand is NaN.
         replace = spirv::ConstantOp::getOne(op.getType(), loc, rewriter);
@@ -1182,7 +1122,7 @@ public:
     Value spirvOp =
         rewriter.create<SPIRVOp>(loc, dstType, adaptor.getOperands());
 
-    if (bitEnumContainsAll(op.getFastmath(), arith::FastMathFlags::nnan)) {
+    if (converter->getOptions().enableFastMathMode) {
       rewriter.replaceOp(op, spirvOp);
       return success();
     }
@@ -1237,7 +1177,7 @@ public:
         rewriter.create<SPIRVOp>(loc, dstType, adaptor.getOperands());
 
     if (!shouldInsertNanGuards<SPIRVOp>() ||
-        bitEnumContainsAll(op.getFastmath(), arith::FastMathFlags::nnan)) {
+        converter->getOptions().enableFastMathMode) {
       rewriter.replaceOp(op, spirvOp);
       return success();
     }
@@ -1277,7 +1217,7 @@ void mlir::arith::populateArithToSPIRVPatterns(
     BitwiseOpPattern<arith::AndIOp, spirv::LogicalAndOp, spirv::BitwiseAndOp>,
     BitwiseOpPattern<arith::OrIOp, spirv::LogicalOrOp, spirv::BitwiseOrOp>,
     XOrIOpLogicalPattern, XOrIOpBooleanPattern,
-    ElementwiseArithOpPattern<arith::ShLIOp, spirv::ShiftLeftLogicalOp>,
+    spirv::ElementwiseOpPattern<arith::ShLIOp, spirv::ShiftLeftLogicalOp>,
     spirv::ElementwiseOpPattern<arith::ShRUIOp, spirv::ShiftRightLogicalOp>,
     spirv::ElementwiseOpPattern<arith::ShRSIOp, spirv::ShiftRightArithmeticOp>,
     spirv::ElementwiseOpPattern<arith::NegFOp, spirv::FNegateOp>,
@@ -1346,6 +1286,7 @@ struct ConvertArithToSPIRVPass
 
     SPIRVConversionOptions options;
     options.emulateLT32BitScalarTypes = this->emulateLT32BitScalarTypes;
+    options.enableFastMathMode = this->enableFastMath;
     SPIRVTypeConverter typeConverter(targetAttr, options);
 
     // Use UnrealizedConversionCast as the bridge so that we don't need to pull

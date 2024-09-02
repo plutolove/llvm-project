@@ -43,28 +43,23 @@ class FileSystem;
 class PGOInstrumentationGenCreateVar
     : public PassInfoMixin<PGOInstrumentationGenCreateVar> {
 public:
-  PGOInstrumentationGenCreateVar(std::string CSInstrName = "",
-                                 bool Sampling = false)
-      : CSInstrName(CSInstrName), ProfileSampling(Sampling) {}
+  PGOInstrumentationGenCreateVar(std::string CSInstrName = "")
+      : CSInstrName(CSInstrName) {}
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
 
 private:
   std::string CSInstrName;
-  bool ProfileSampling;
 };
 
-enum class PGOInstrumentationType { Invalid = 0, FDO, CSFDO, CTXPROF };
 /// The instrumentation (profile-instr-gen) pass for IR based PGO.
 class PGOInstrumentationGen : public PassInfoMixin<PGOInstrumentationGen> {
 public:
-  PGOInstrumentationGen(
-      PGOInstrumentationType InstrumentationType = PGOInstrumentationType ::FDO)
-      : InstrumentationType(InstrumentationType) {}
+  PGOInstrumentationGen(bool IsCS = false) : IsCS(IsCS) {}
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
 
 private:
   // If this is a context sensitive instrumentation.
-  const PGOInstrumentationType InstrumentationType;
+  bool IsCS;
 };
 
 /// The profile annotation (profile-instr-use) pass for IR based PGO.

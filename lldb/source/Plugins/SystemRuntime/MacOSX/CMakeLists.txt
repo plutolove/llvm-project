@@ -4,7 +4,6 @@ add_lldb_library(lldbPluginSystemRuntimeMacOSX PLUGIN
   AppleGetQueuesHandler.cpp
   AppleGetThreadItemInfoHandler.cpp
   SystemRuntimeMacOSX.cpp
-  AbortWithPayloadFrameRecognizer.cpp
 
   LINK_LIBS
     lldbBreakpoint

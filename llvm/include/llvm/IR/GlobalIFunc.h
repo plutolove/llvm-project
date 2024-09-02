@@ -80,6 +80,10 @@ public:
         static_cast<const GlobalIFunc *>(this)->getResolverFunction());
   }
 
+  static FunctionType *getResolverFunctionType(Type *IFuncValTy) {
+    return FunctionType::get(IFuncValTy->getPointerTo(), false);
+  }
+
   static bool isValidLinkage(LinkageTypes L) {
     return isExternalLinkage(L) || isLocalLinkage(L) || isWeakLinkage(L) ||
            isLinkOnceLinkage(L);

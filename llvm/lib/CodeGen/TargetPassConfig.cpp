@@ -46,7 +46,6 @@
 #include "llvm/Support/WithColor.h"
 #include "llvm/Target/CGPassBuilderOption.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils.h"
 #include <cassert>
@@ -205,10 +204,6 @@ static cl::opt<bool> MISchedPostRA(
 // Experimental option to run live interval analysis early.
 static cl::opt<bool> EarlyLiveIntervals("early-live-intervals", cl::Hidden,
     cl::desc("Run live interval analysis earlier in the pipeline"));
-
-static cl::opt<bool> DisableReplaceWithVecLib(
-    "disable-replace-with-vec-lib", cl::Hidden,
-    cl::desc("Disable replace with vector math call pass"));
 
 /// Option names for limiting the codegen pipeline.
 /// Those are used in error reporting and we didn't want
@@ -828,8 +823,6 @@ void TargetPassConfig::addIRPasses() {
     if (!DisableLSR) {
       addPass(createCanonicalizeFreezeInLoopsPass());
       addPass(createLoopStrengthReducePass());
-      if (EnableLoopTermFold)
-        addPass(createLoopTermFoldPass());
       if (PrintLSR)
         addPass(createPrintFunctionPass(dbgs(),
                                         "\n\n*** Code after LSR ***\n"));
@@ -848,6 +841,7 @@ void TargetPassConfig::addIRPasses() {
   // TODO: add a pass insertion point here
   addPass(&GCLoweringID);
   addPass(&ShadowStackGCLoweringID);
+  addPass(createLowerConstantIntrinsicsPass());
 
   // For MachO, lower @llvm.global_dtors into @llvm.global_ctors with
   // __cxa_atexit() calls to avoid emitting the deprecated __mod_term_func.
@@ -862,14 +856,16 @@ void TargetPassConfig::addIRPasses() {
   if (getOptLevel() != CodeGenOptLevel::None && !DisableConstantHoisting)
     addPass(createConstantHoistingPass());
 
-  if (getOptLevel() != CodeGenOptLevel::None && !DisableReplaceWithVecLib)
+  if (getOptLevel() != CodeGenOptLevel::None)
     addPass(createReplaceWithVeclibLegacyPass());
 
   if (getOptLevel() != CodeGenOptLevel::None && !DisablePartialLibcallInlining)
     addPass(createPartiallyInlineLibCallsPass());
 
-  // Instrument function entry after all inlining.
-  addPass(createPostInlineEntryExitInstrumenterPass());
+  // Expand vector predication intrinsics into standard IR instructions.
+  // This pass has to run before ScalarizeMaskedMemIntrin and ExpandReduction
+  // passes since it emits those kinds of intrinsics.
+  addPass(createExpandVectorPredicationPass());
 
   // Add scalarization of target's unsupported masked memory intrinsics pass.
   // the unsupported intrinsic will be replaced with a chain of basic blocks,
@@ -922,7 +918,7 @@ void TargetPassConfig::addPassesToHandleExceptions() {
     // on catchpads and cleanuppads because it does not outline them into
     // funclets. Catchswitch blocks are not lowered in SelectionDAG, so we
     // should remove PHIs there.
-    addPass(createWinEHPass(/*DemoteCatchSwitchPHIOnly=*/true));
+    addPass(createWinEHPass(/*DemoteCatchSwitchPHIOnly=*/false));
     addPass(createWasmEHPass());
     break;
   case ExceptionHandling::None:
@@ -949,9 +945,6 @@ void TargetPassConfig::addISelPrepare() {
   // Force codegen to run according to the callgraph.
   if (requiresCodeGenSCCOrder())
     addPass(new DummyCGSCCPass);
-
-  if (getOptLevel() != CodeGenOptLevel::None)
-    addPass(createObjCARCContractPass());
 
   addPass(createCallBrPass());
 
@@ -1206,7 +1199,6 @@ void TargetPassConfig::addMachinePasses() {
   // addPreEmitPass.  Maybe only pass "false" here for those targets?
   addPass(&FuncletLayoutID);
 
-  addPass(&RemoveLoadsIntoFakeUsesID);
   addPass(&StackMapLivenessID);
   addPass(&LiveDebugValuesID);
   addPass(&MachineSanitizerBinaryMetadataID);
@@ -1229,13 +1221,19 @@ void TargetPassConfig::addMachinePasses() {
     addPass(createMIRAddFSDiscriminatorsPass(
         sampleprof::FSDiscriminatorPass::PassLast));
 
-  bool NeedsBBSections =
-      TM->getBBSectionsType() != llvm::BasicBlockSection::None;
   // Machine function splitter uses the basic block sections feature. Both
-  // cannot be enabled at the same time. We do not apply machine function
-  // splitter if -basic-block-sections is requested.
-  if (!NeedsBBSections && (TM->Options.EnableMachineFunctionSplitter ||
-                           EnableMachineFunctionSplitter)) {
+  // cannot be enabled at the same time. Basic block sections takes precedence.
+  // FIXME: In principle, BasicBlockSection::Labels and splitting can used
+  // together. Update this check once we have addressed any issues.
+  if (TM->getBBSectionsType() != llvm::BasicBlockSection::None) {
+    if (TM->getBBSectionsType() == llvm::BasicBlockSection::List) {
+      addPass(llvm::createBasicBlockSectionsProfileReaderWrapperPass(
+          TM->getBBSectionsFuncListBuf()));
+      addPass(llvm::createBasicBlockPathCloningPass());
+    }
+    addPass(llvm::createBasicBlockSectionsPass());
+  } else if (TM->Options.EnableMachineFunctionSplitter ||
+             EnableMachineFunctionSplitter) {
     const std::string ProfileFile = getFSProfileFile(TM);
     if (!ProfileFile.empty()) {
       if (EnableFSDiscriminator) {
@@ -1251,16 +1249,6 @@ void TargetPassConfig::addMachinePasses() {
       }
     }
     addPass(createMachineFunctionSplitterPass());
-  }
-  // We run the BasicBlockSections pass if either we need BB sections or BB
-  // address map (or both).
-  if (NeedsBBSections || TM->Options.BBAddrMap) {
-    if (TM->getBBSectionsType() == llvm::BasicBlockSection::List) {
-      addPass(llvm::createBasicBlockSectionsProfileReaderWrapperPass(
-          TM->getBBSectionsFuncListBuf()));
-      addPass(llvm::createBasicBlockPathCloningPass());
-    }
-    addPass(llvm::createBasicBlockSectionsPass());
   }
 
   addPostBBSections();
@@ -1434,8 +1422,6 @@ void TargetPassConfig::addFastRegAlloc() {
 /// scheduling, and register allocation itself.
 void TargetPassConfig::addOptimizedRegAlloc() {
   addPass(&DetectDeadLanesID);
-
-  addPass(&InitUndefID);
 
   addPass(&ProcessImplicitDefsID);
 

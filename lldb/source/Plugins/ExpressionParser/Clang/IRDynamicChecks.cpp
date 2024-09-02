@@ -280,9 +280,10 @@ protected:
 
   IntegerType *GetIntptrTy() {
     if (!m_intptr_ty) {
-      m_intptr_ty = llvm::Type::getIntNTy(
-          m_module.getContext(),
-          m_module.getDataLayout().getPointerSizeInBits());
+      llvm::DataLayout data_layout(&m_module);
+
+      m_intptr_ty = llvm::Type::getIntNTy(m_module.getContext(),
+                                          data_layout.getPointerSizeInBits());
     }
 
     return m_intptr_ty;

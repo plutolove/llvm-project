@@ -24,7 +24,6 @@ static_library("Utils") {
     "CodeExtractor.cpp",
     "CodeLayout.cpp",
     "CodeMoverUtils.cpp",
-    "ControlFlowUtils.cpp",
     "CountVisits.cpp",
     "CtorUtils.cpp",
     "DXILUpgrade.cpp",

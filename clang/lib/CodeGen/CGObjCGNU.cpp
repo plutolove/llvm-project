@@ -199,7 +199,8 @@ protected:
   llvm::Constant *MakeConstantString(StringRef Str, const char *Name = "") {
     ConstantAddress Array =
         CGM.GetAddrOfConstantCString(std::string(Str), Name);
-    return Array.getPointer();
+    return llvm::ConstantExpr::getGetElementPtr(Array.getElementType(),
+                                                Array.getPointer(), Zeros);
   }
 
   /// Emits a linkonce_odr string, whose name is the prefix followed by the
@@ -220,7 +221,8 @@ protected:
         GV->setVisibility(llvm::GlobalValue::HiddenVisibility);
       ConstStr = GV;
     }
-    return ConstStr;
+    return llvm::ConstantExpr::getGetElementPtr(ConstStr->getValueType(),
+                                                ConstStr, Zeros);
   }
 
   /// Returns a property name and encoding string.
@@ -278,9 +280,9 @@ protected:
       Fields.addInt(IntTy, count);
       // int size; (only in GNUstep v2 ABI.
       if (isRuntime(ObjCRuntime::GNUstep, 2)) {
-        const llvm::DataLayout &DL = TheModule.getDataLayout();
-        Fields.addInt(IntTy, DL.getTypeSizeInBits(PropertyMetadataTy) /
-                                 CGM.getContext().getCharWidth());
+        llvm::DataLayout td(&TheModule);
+        Fields.addInt(IntTy, td.getTypeSizeInBits(PropertyMetadataTy) /
+            CGM.getContext().getCharWidth());
       }
       // struct objc_property_list *next;
       Fields.add(NULLPtr);
@@ -704,8 +706,7 @@ protected:
                               llvm::Value *cmd, MessageSendInfo &MSI) override {
     CGBuilderTy &Builder = CGF.Builder;
     llvm::Value *lookupArgs[] = {
-        EnforceType(Builder, ObjCSuper.emitRawPointer(CGF), PtrToObjCSuperTy),
-        cmd};
+        EnforceType(Builder, ObjCSuper.getPointer(), PtrToObjCSuperTy), cmd};
     return CGF.EmitNounwindRuntimeCall(MsgLookupSuperFn, lookupArgs);
   }
 
@@ -760,8 +761,8 @@ class CGObjCGNUstep : public CGObjCGNU {
       llvm::FunctionCallee LookupFn = SlotLookupFn;
 
       // Store the receiver on the stack so that we can reload it later
-      RawAddress ReceiverPtr =
-          CGF.CreateTempAlloca(Receiver->getType(), CGF.getPointerAlign());
+      Address ReceiverPtr =
+        CGF.CreateTempAlloca(Receiver->getType(), CGF.getPointerAlign());
       Builder.CreateStore(Receiver, ReceiverPtr);
 
       llvm::Value *self;
@@ -777,9 +778,9 @@ class CGObjCGNUstep : public CGObjCGNU {
         LookupFn2->addParamAttr(0, llvm::Attribute::NoCapture);
 
       llvm::Value *args[] = {
-          EnforceType(Builder, ReceiverPtr.getPointer(), PtrToIdTy),
-          EnforceType(Builder, cmd, SelectorTy),
-          EnforceType(Builder, self, IdTy)};
+              EnforceType(Builder, ReceiverPtr.getPointer(), PtrToIdTy),
+              EnforceType(Builder, cmd, SelectorTy),
+              EnforceType(Builder, self, IdTy) };
       llvm::CallBase *slot = CGF.EmitRuntimeCallOrInvoke(LookupFn, args);
       slot->setOnlyReadsMemory();
       slot->setMetadata(msgSendMDKind, node);
@@ -799,7 +800,7 @@ class CGObjCGNUstep : public CGObjCGNU {
                                 llvm::Value *cmd,
                                 MessageSendInfo &MSI) override {
       CGBuilderTy &Builder = CGF.Builder;
-      llvm::Value *lookupArgs[] = {ObjCSuper.emitRawPointer(CGF), cmd};
+      llvm::Value *lookupArgs[] = {ObjCSuper.getPointer(), cmd};
 
       llvm::CallInst *slot =
         CGF.EmitNounwindRuntimeCall(SlotLookupSuperFn, lookupArgs);
@@ -1190,9 +1191,9 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
     // int count;
     MethodList.addInt(IntTy, Methods.size());
     // int size; // sizeof(struct objc_method_description)
-    const llvm::DataLayout &DL = TheModule.getDataLayout();
-    MethodList.addInt(IntTy, DL.getTypeSizeInBits(ObjCMethodDescTy) /
-                                 CGM.getContext().getCharWidth());
+    llvm::DataLayout td(&TheModule);
+    MethodList.addInt(IntTy, td.getTypeSizeInBits(ObjCMethodDescTy) /
+        CGM.getContext().getCharWidth());
     // struct objc_method_description[]
     auto MethodArray = MethodList.beginArray(ObjCMethodDescTy);
     for (auto *M : Methods) {
@@ -1220,10 +1221,10 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
                               llvm::Value *cmd, MessageSendInfo &MSI) override {
     // Don't access the slot unless we're trying to cache the result.
     CGBuilderTy &Builder = CGF.Builder;
-    llvm::Value *lookupArgs[] = {
-        CGObjCGNU::EnforceType(Builder, ObjCSuper.emitRawPointer(CGF),
-                               PtrToObjCSuperTy),
-        cmd};
+    llvm::Value *lookupArgs[] = {CGObjCGNU::EnforceType(Builder,
+                                                        ObjCSuper.getPointer(),
+                                                        PtrToObjCSuperTy),
+                                 cmd};
     return CGF.EmitNounwindRuntimeCall(MsgLookupSuperFn, lookupArgs);
   }
 
@@ -1475,7 +1476,8 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
       GV->setVisibility(llvm::GlobalValue::HiddenVisibility);
       TypesGlobal = GV;
     }
-    return TypesGlobal;
+    return llvm::ConstantExpr::getGetElementPtr(TypesGlobal->getValueType(),
+        TypesGlobal, Zeros);
   }
   llvm::Constant *GetConstantSelector(Selector Sel,
                                       const std::string &TypeEncoding) override {
@@ -1828,7 +1830,7 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
       int ivar_count = 0;
       for (const ObjCIvarDecl *IVD = classDecl->all_declared_ivar_begin(); IVD;
            IVD = IVD->getNextIvar()) ivar_count++;
-      const llvm::DataLayout &DL = TheModule.getDataLayout();
+      llvm::DataLayout td(&TheModule);
       // struct objc_ivar_list *ivars;
       ConstantInitBuilder b(CGM);
       auto ivarListBuilder = b.beginStruct();
@@ -1841,8 +1843,8 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
         PtrToInt8Ty,
         Int32Ty,
         Int32Ty);
-      ivarListBuilder.addInt(SizeTy, DL.getTypeSizeInBits(ObjCIvarTy) /
-                                         CGM.getContext().getCharWidth());
+      ivarListBuilder.addInt(SizeTy, td.getTypeSizeInBits(ObjCIvarTy) /
+          CGM.getContext().getCharWidth());
       // struct objc_ivar ivars[]
       auto ivarArrayBuilder = ivarListBuilder.beginArray();
       for (const ObjCIvarDecl *IVD = classDecl->all_declared_ivar_begin(); IVD;
@@ -2069,7 +2071,7 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
 
         Builder.CreateCondBr(Builder.CreateICmpEQ(selfValue, Zero),
                              SelfIsNilBlock, ContBlock,
-                             MDHelper.createUnlikelyBranchWeights());
+                             MDHelper.createBranchWeights(1, 1 << 20));
 
         CGF.EmitBlock(SelfIsNilBlock);
 
@@ -2092,15 +2094,10 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
         auto *classStart =
             llvm::StructType::get(PtrTy, PtrTy, PtrTy, LongTy, LongTy);
         auto &astContext = CGM.getContext();
-        // FIXME: The following few lines up to and including the call to
-        // `CreateLoad` were known to miscompile when MSVC 19.40.33813 is used
-        // to build Clang. When the bug is fixed in future MSVC releases, we
-        // should revert these lines to their previous state. See discussion in
-        // https://github.com/llvm/llvm-project/pull/102681
-        llvm::Value *Val = Builder.CreateStructGEP(classStart, selfValue, 4);
-        auto Align = CharUnits::fromQuantity(
-            astContext.getTypeAlign(astContext.UnsignedLongTy));
-        auto flags = Builder.CreateLoad(Address{Val, LongTy, Align});
+        auto flags = Builder.CreateLoad(
+            Address{Builder.CreateStructGEP(classStart, selfValue, 4), LongTy,
+                    CharUnits::fromQuantity(
+                        astContext.getTypeAlign(astContext.UnsignedLongTy))});
         auto isInitialized =
             Builder.CreateAnd(flags, ClassFlags::ClassFlagInitialized);
         llvm::BasicBlock *notInitializedBlock =
@@ -2109,7 +2106,7 @@ class CGObjCGNUstep2 : public CGObjCGNUstep {
             CGF.createBasicBlock("objc_direct_method.class_initialized");
         Builder.CreateCondBr(Builder.CreateICmpEQ(isInitialized, Zeros[0]),
                              notInitializedBlock, initializedBlock,
-                             MDHelper.createUnlikelyBranchWeights());
+                             MDHelper.createBranchWeights(1, 1 << 20));
         CGF.EmitBlock(notInitializedBlock);
         Builder.SetInsertPoint(notInitializedBlock);
         CGF.EmitRuntimeCall(SentInitializeFn, selfValue);
@@ -2189,8 +2186,7 @@ protected:
                               llvm::Value *cmd, MessageSendInfo &MSI) override {
     CGBuilderTy &Builder = CGF.Builder;
     llvm::Value *lookupArgs[] = {
-        EnforceType(Builder, ObjCSuper.emitRawPointer(CGF), PtrToObjCSuperTy),
-        cmd,
+        EnforceType(Builder, ObjCSuper.getPointer(), PtrToObjCSuperTy), cmd,
     };
 
     if (CGM.ReturnTypeUsesSRet(MSI.CallInfo))
@@ -3019,9 +3015,9 @@ GenerateMethodList(StringRef ClassName,
   bool isV2ABI = isRuntime(ObjCRuntime::GNUstep, 2);
   if (isV2ABI) {
     // size_t size;
-    const llvm::DataLayout &DL = TheModule.getDataLayout();
-    MethodList.addInt(SizeTy, DL.getTypeSizeInBits(ObjCMethodTy) /
-                                  CGM.getContext().getCharWidth());
+    llvm::DataLayout td(&TheModule);
+    MethodList.addInt(SizeTy, td.getTypeSizeInBits(ObjCMethodTy) /
+        CGM.getContext().getCharWidth());
     ObjCMethodTy =
       llvm::StructType::get(CGM.getLLVMContext(), {
         IMPTy,       // Method pointer
@@ -3161,9 +3157,10 @@ llvm::Constant *CGObjCGNU::GenerateClassStructure(
   Elements.addInt(LongTy, info);
   // instance_size
   if (isMeta) {
-    const llvm::DataLayout &DL = TheModule.getDataLayout();
-    Elements.addInt(LongTy, DL.getTypeSizeInBits(ClassTy) /
-                                CGM.getContext().getCharWidth());
+    llvm::DataLayout td(&TheModule);
+    Elements.addInt(LongTy,
+                    td.getTypeSizeInBits(ClassTy) /
+                      CGM.getContext().getCharWidth());
   } else
     Elements.add(InstanceSize);
   // ivars
@@ -4210,15 +4207,15 @@ void CGObjCGNU::EmitThrowStmt(CodeGenFunction &CGF,
 llvm::Value * CGObjCGNU::EmitObjCWeakRead(CodeGenFunction &CGF,
                                           Address AddrWeakObj) {
   CGBuilderTy &B = CGF.Builder;
-  return B.CreateCall(
-      WeakReadFn, EnforceType(B, AddrWeakObj.emitRawPointer(CGF), PtrToIdTy));
+  return B.CreateCall(WeakReadFn,
+                      EnforceType(B, AddrWeakObj.getPointer(), PtrToIdTy));
 }
 
 void CGObjCGNU::EmitObjCWeakAssign(CodeGenFunction &CGF,
                                    llvm::Value *src, Address dst) {
   CGBuilderTy &B = CGF.Builder;
   src = EnforceType(B, src, IdTy);
-  llvm::Value *dstVal = EnforceType(B, dst.emitRawPointer(CGF), PtrToIdTy);
+  llvm::Value *dstVal = EnforceType(B, dst.getPointer(), PtrToIdTy);
   B.CreateCall(WeakAssignFn, {src, dstVal});
 }
 
@@ -4227,7 +4224,7 @@ void CGObjCGNU::EmitObjCGlobalAssign(CodeGenFunction &CGF,
                                      bool threadlocal) {
   CGBuilderTy &B = CGF.Builder;
   src = EnforceType(B, src, IdTy);
-  llvm::Value *dstVal = EnforceType(B, dst.emitRawPointer(CGF), PtrToIdTy);
+  llvm::Value *dstVal = EnforceType(B, dst.getPointer(), PtrToIdTy);
   // FIXME. Add threadloca assign API
   assert(!threadlocal && "EmitObjCGlobalAssign - Threal Local API NYI");
   B.CreateCall(GlobalAssignFn, {src, dstVal});
@@ -4238,7 +4235,7 @@ void CGObjCGNU::EmitObjCIvarAssign(CodeGenFunction &CGF,
                                    llvm::Value *ivarOffset) {
   CGBuilderTy &B = CGF.Builder;
   src = EnforceType(B, src, IdTy);
-  llvm::Value *dstVal = EnforceType(B, dst.emitRawPointer(CGF), IdTy);
+  llvm::Value *dstVal = EnforceType(B, dst.getPointer(), IdTy);
   B.CreateCall(IvarAssignFn, {src, dstVal, ivarOffset});
 }
 
@@ -4246,7 +4243,7 @@ void CGObjCGNU::EmitObjCStrongCastAssign(CodeGenFunction &CGF,
                                          llvm::Value *src, Address dst) {
   CGBuilderTy &B = CGF.Builder;
   src = EnforceType(B, src, IdTy);
-  llvm::Value *dstVal = EnforceType(B, dst.emitRawPointer(CGF), PtrToIdTy);
+  llvm::Value *dstVal = EnforceType(B, dst.getPointer(), PtrToIdTy);
   B.CreateCall(StrongCastAssignFn, {src, dstVal});
 }
 
@@ -4255,8 +4252,8 @@ void CGObjCGNU::EmitGCMemmoveCollectable(CodeGenFunction &CGF,
                                          Address SrcPtr,
                                          llvm::Value *Size) {
   CGBuilderTy &B = CGF.Builder;
-  llvm::Value *DestPtrVal = EnforceType(B, DestPtr.emitRawPointer(CGF), PtrTy);
-  llvm::Value *SrcPtrVal = EnforceType(B, SrcPtr.emitRawPointer(CGF), PtrTy);
+  llvm::Value *DestPtrVal = EnforceType(B, DestPtr.getPointer(), PtrTy);
+  llvm::Value *SrcPtrVal = EnforceType(B, SrcPtr.getPointer(), PtrTy);
 
   B.CreateCall(MemMoveFn, {DestPtrVal, SrcPtrVal, Size});
 }

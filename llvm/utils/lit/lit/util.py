@@ -408,7 +408,7 @@ def executeCommand(
         out, err = p.communicate(input=input)
         exitCode = p.wait()
     finally:
-        if timerObject is not None:
+        if timerObject != None:
             timerObject.cancel()
 
     # Ensure the resulting output is always of string type.

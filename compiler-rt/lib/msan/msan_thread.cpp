@@ -1,11 +1,11 @@
 
-#include "msan_thread.h"
-
 #include "msan.h"
+#include "msan_thread.h"
 #include "msan_interface_internal.h"
+
 #include "sanitizer_common/sanitizer_tls_get_addr.h"
 
-using namespace __msan;
+namespace __msan {
 
 MsanThread *MsanThread::Create(thread_callback_t start_routine,
                                void *arg) {
@@ -74,7 +74,9 @@ thread_return_t MsanThread::ThreadStart() {
     return 0;
   }
 
-  return start_routine_(arg_);
+  thread_return_t res = start_routine_(arg_);
+
+  return res;
 }
 
 MsanThread::StackBounds MsanThread::GetStackBounds() const {
@@ -117,3 +119,5 @@ void MsanThread::FinishSwitchFiber(uptr *bottom_old, uptr *size_old) {
   next_stack_.top = 0;
   next_stack_.bottom = 0;
 }
+
+} // namespace __msan

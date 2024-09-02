@@ -429,8 +429,6 @@ _LIBCPP_HIDE_FROM_ABI bool atomic_compare_exchange_strong_explicit(
   return __o->compare_exchange_strong(*__e, __d, __s, __f);
 }
 
-#if _LIBCPP_STD_VER >= 20
-
 // atomic_wait
 
 template <class _Tp>
@@ -482,8 +480,6 @@ template <class _Tp>
 _LIBCPP_AVAILABILITY_SYNC _LIBCPP_HIDE_FROM_ABI void atomic_notify_all(atomic<_Tp>* __o) _NOEXCEPT {
   __o->notify_all();
 }
-
-#endif // _LIBCPP_STD_VER >= 20
 
 // atomic_fetch_add
 

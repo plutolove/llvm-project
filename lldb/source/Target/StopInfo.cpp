@@ -987,10 +987,8 @@ protected:
 
         // Don't stop if the watched region value is unmodified, and
         // this is a Modify-type watchpoint.
-        if (m_should_stop && !wp_sp->WatchedValueReportable(exe_ctx)) {
-          wp_sp->UndoHitCount();
+        if (m_should_stop && !wp_sp->WatchedValueReportable(exe_ctx))
           m_should_stop = false;
-        }
 
         // Finally, if we are going to stop, print out the new & old values:
         if (m_should_stop) {
@@ -1123,29 +1121,6 @@ public:
 private:
   // In siginfo_t terms, if m_value is si_signo, m_code is si_code.
   std::optional<int> m_code;
-};
-
-// StopInfoInterrupt
-
-class StopInfoInterrupt : public StopInfo {
-public:
-  StopInfoInterrupt(Thread &thread, int signo, const char *description)
-      : StopInfo(thread, signo) {
-    SetDescription(description);
-  }
-
-  ~StopInfoInterrupt() override = default;
-
-  StopReason GetStopReason() const override {
-    return lldb::eStopReasonInterrupt;
-  }
-
-  const char *GetDescription() override {
-    if (m_description.empty()) {
-      m_description = "async interrupt";
-    }
-    return m_description.c_str();
-  }
 };
 
 // StopInfoTrace
@@ -1411,11 +1386,6 @@ StopInfoSP StopInfo::CreateStopReasonWithSignal(Thread &thread, int signo,
                                                 std::optional<int> code) {
   thread.GetProcess()->GetUnixSignals()->IncrementSignalHitCount(signo);
   return StopInfoSP(new StopInfoUnixSignal(thread, signo, description, code));
-}
-
-StopInfoSP StopInfo::CreateStopReasonWithInterrupt(Thread &thread, int signo,
-                                                   const char *description) {
-  return StopInfoSP(new StopInfoInterrupt(thread, signo, description));
 }
 
 StopInfoSP StopInfo::CreateStopReasonToTrace(Thread &thread) {

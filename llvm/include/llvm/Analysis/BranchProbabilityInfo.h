@@ -22,6 +22,7 @@
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/Pass.h"
 #include "llvm/Support/BranchProbability.h"
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <memory>
@@ -344,7 +345,7 @@ private:
 
   /// Helper to construct LoopBlock for \p BB.
   LoopBlock getLoopBlock(const BasicBlock *BB) const {
-    return LoopBlock(BB, *LI, *SccI);
+    return LoopBlock(BB, *LI, *SccI.get());
   }
 
   /// Returns true if destination block belongs to some loop and source block is

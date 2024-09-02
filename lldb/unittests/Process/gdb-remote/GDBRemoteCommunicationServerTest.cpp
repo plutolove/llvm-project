@@ -25,7 +25,10 @@ TEST(GDBRemoteCommunicationServerTest, SendErrorResponse_ErrorNumber) {
 
 TEST(GDBRemoteCommunicationServerTest, SendErrorResponse_Status) {
   MockServerWithMockConnection server;
-  Status status(0x42, lldb::eErrorTypeGeneric, "Test error message");
+  Status status;
+
+  status.SetError(0x42, lldb::eErrorTypeGeneric);
+  status.SetErrorString("Test error message");
   server.SendErrorResponse(status);
 
   EXPECT_THAT(
