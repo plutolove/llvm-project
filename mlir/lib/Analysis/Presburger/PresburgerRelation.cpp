@@ -18,6 +18,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
 #include <functional>
@@ -599,6 +600,12 @@ PresburgerRelation PresburgerRelation::complement() const {
 /// return `this \ set`.
 PresburgerRelation
 PresburgerRelation::subtract(const PresburgerRelation &set) const {
+  llvm::dbgs() << "set: " << set.getNumDomainVars() << "\t"
+               << set.getNumLocalVars() << "\t" << set.getNumRangeVars() << "\t"
+               << set.getNumSymbolVars() << "\n";
+  llvm::dbgs() << "space: " << space.getNumDomainVars() << "\t"
+               << space.getNumLocalVars() << "\t" << space.getNumRangeVars()
+               << "\t" << space.getNumSymbolVars() << "\n";
   assert(space.isCompatible(set.getSpace()) && "Spaces should match");
   PresburgerRelation result(getSpace());
 
